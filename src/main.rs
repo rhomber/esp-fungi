@@ -6,7 +6,7 @@ extern crate alloc;
 use core::mem::MaybeUninit;
 use embassy_executor::Spawner;
 use esp_backtrace as _;
-use esp_hal::{clock::ClockControl, peripherals::Peripherals, prelude::*, Delay, embassy};
+use esp_hal::{clock::ClockControl, peripherals::Peripherals, prelude::*, Delay, embassy, Rtc};
 use esp_println::println;
 
 use esp_wifi::{initialize, EspWifiInitFor};
@@ -34,19 +34,9 @@ async fn main(spawner: Spawner) {
     let clocks = ClockControl::max(system.clock_control).freeze();
     let mut delay = Delay::new(&clocks);
 
-    // Disable watchdogs
-    // TODO:
-    //let mut rtc = Rtc::new(peripherals.RTC_CNTL);
     let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks);
-    //let mut wdt0 = timer_group0.wdt;
     let timer_group1 = TimerGroup::new(peripherals.TIMG1, &clocks);
-    //let mut wdt1 = timer_group1.wdt;
-
-    //rtc.swd.disable();
-    //rtc.rwdt.disable();
-    //wdt0.disable();
-    //wdt1.disable();
-
+    
     // Init embassy
     embassy::init(&clocks, timer_group0);
 
