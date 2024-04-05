@@ -19,7 +19,8 @@ use fugit::RateExtU32;
 
 use crate::error::{general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
 
-pub type SensorSubscriber = Subscriber<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>;
+pub type SensorSubscriber =
+    Subscriber<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>;
 
 pub(crate) static CHANNEL: PubSubChannel<CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1> =
     PubSubChannel::new();
@@ -64,13 +65,13 @@ async fn emitter(
 ) {
     loop {
         let msg = match dev.read() {
-            Ok((temp, hum)) => {
-                if temp > 0_f32 && hum > 0_f32 {
-                    log::info!("Temp: {}, Humidity: {}", temp, hum);
+            Ok((temp,rh )) => {
+                if temp > 0_f32 && rh > 0_f32 {
+                    log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
 
-                    Some(ChannelMessage { temp, hum })
+                    Some(ChannelMessage { temp, rh })
                 } else {
-                    log::error!("Failed to read from sensor (temp: {}, hum: {})", temp, hum);
+                    log::error!("Failed to read from sensor (temp: {}, rh: {})", temp, rh);
 
                     None
                 }
@@ -97,7 +98,7 @@ async fn emitter(
 #[derive(Clone)]
 pub(crate) struct ChannelMessage {
     pub(crate) temp: f32,
-    pub(crate) hum: f32,
+    pub(crate) rh: f32,
 }
 
 #[cfg(feature = "hdc1080")]

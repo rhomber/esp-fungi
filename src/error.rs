@@ -1,5 +1,6 @@
 use alloc::string::String;
 use core::fmt;
+use display_interface::DisplayError;
 use embassy_executor::SpawnError;
 use embassy_sync::pubsub::Error as EmbassyPubSubError;
 use esp_wifi::wifi::WifiError;
@@ -24,6 +25,12 @@ pub enum Error {
     EmbassyPubSub {
         e: EmbassyPubSubError,
     },
+    Display {
+        e: DisplayError,
+    },
+    DisplayDraw {
+        msg: String,
+    },
 }
 
 impl fmt::Display for Error {
@@ -43,6 +50,12 @@ impl fmt::Display for Error {
             }
             Error::EmbassyPubSub { e } => {
                 write!(f, "Embassy pub/sub error: {:?}", e)
+            }
+            Error::Display { e } => {
+                write!(f, "Display error: {:?}", e)
+            }
+            Error::DisplayDraw { msg } => {
+                write!(f, "Display draw error: {:?}", msg)
             }
         }
     }
@@ -73,4 +86,12 @@ pub(crate) fn map_embassy_spawn_err(e: SpawnError) -> Error {
 
 pub(crate) fn map_embassy_pub_sub_err(e: EmbassyPubSubError) -> Error {
     Error::EmbassyPubSub { e }
+}
+
+pub(crate) fn map_display_err(e: DisplayError) -> Error {
+    Error::Display { e }
+}
+
+pub(crate) fn display_draw_err(msg: String) -> Error {
+    Error::DisplayDraw { msg }
 }
