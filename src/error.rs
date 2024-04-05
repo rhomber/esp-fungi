@@ -1,5 +1,6 @@
 use alloc::string::String;
 use core::fmt;
+use embassy_executor::SpawnError;
 use esp_wifi::wifi::WifiError;
 use esp_wifi::InitializationError;
 
@@ -16,6 +17,9 @@ pub enum Error {
     Wifi {
         e: WifiError,
     },
+    EmbassySpawn {
+        e: SpawnError,
+    },
 }
 
 impl fmt::Display for Error {
@@ -29,6 +33,9 @@ impl fmt::Display for Error {
             }
             Error::Wifi { e } => {
                 write!(f, "WIFI error: {:?}", e)
+            }
+            Error::EmbassySpawn { e } => {
+                write!(f, "Embassy spawn error: {:?}", e)
             }
         }
     }
@@ -51,4 +58,8 @@ pub(crate) fn map_wifi_init_err(e: InitializationError) -> Error {
 
 pub(crate) fn map_wifi_err(e: WifiError) -> Error {
     Error::Wifi { e }
+}
+
+pub(crate) fn map_embassy_spawn_err(e: SpawnError) -> Error {
+    Error::EmbassySpawn { e }
 }

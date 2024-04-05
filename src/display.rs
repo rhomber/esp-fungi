@@ -11,7 +11,7 @@ use esp_hal::clock::Clocks;
 use esp_hal::gpio::{InputPin, OutputPin};
 use esp_hal::i2c::I2C;
 use esp_hal::peripheral::Peripheral;
-use esp_hal::peripherals::I2C0;
+use esp_hal::peripherals::I2C1;
 use esp_hal::{prelude::*, spi::master::prelude::*, Delay};
 use esp_println::println;
 use fugit::RateExtU32;
@@ -19,14 +19,14 @@ use profont::PROFONT_7_POINT;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
-use crate::error::Result;
+use crate::error::{map_embassy_spawn_err, Result};
 
 pub(crate) fn init<SDA, SDA_, SCL, SCL_>(
     sda: SDA,
     scl: SCL,
-    i2c0: I2C0,
+    i2c0: I2C1,
     clocks: &Clocks,
-    spawner: &Spawner
+    spawner: &Spawner,
 ) -> Result<()>
 where
     SDA: Peripheral<P = SDA_>,
@@ -123,7 +123,7 @@ where
         delay.delay_ms(5_u32);
     }
 
-    spawner.spawn(simples()).unwrap();
+    spawner.spawn(simples()).map_err(map_embassy_spawn_err)?;
 
     Ok(())
 }
@@ -131,7 +131,6 @@ where
 #[embassy_executor::task]
 async fn simples() {
     loop {
-        println!("Hello world from embassy using esp-hal-async!");
         log::info!("simples loopy");
         Timer::after(Duration::from_millis(1_000)).await;
     }

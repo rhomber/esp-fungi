@@ -5,6 +5,7 @@
 mod display;
 mod error;
 mod network;
+mod sensor;
 
 extern crate alloc;
 use core::mem::MaybeUninit;
@@ -41,24 +42,12 @@ async fn main(spawner: Spawner) {
     let gpio = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
     let clocks = ClockControl::max(system.clock_control).freeze();
-    let mut delay = Delay::new(&clocks);
 
     let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks);
     let timer_group1 = TimerGroup::new(peripherals.TIMG1, &clocks);
 
     // Init embassy
     embassy::init(&clocks, timer_group0);
-
-    // Init display
-    if let Err(e) = display::init(
-        gpio.pins.gpio19,
-        gpio.pins.gpio18,
-        peripherals.I2C0,
-        &clocks,
-        &spawner
-    ) {
-        log::error!("Failed to init display: {:?}", e);
-    }
 
     // Init network
     network::init(
@@ -69,4 +58,26 @@ async fn main(spawner: Spawner) {
         &clocks,
     )
     .expect("failed to init network");
+
+    // Init sensor
+    if let Err(e) = sensor::init(
+        gpio.pins.gpio14,
+        gpio.pins.gpio15,
+        peripherals.I2C0,
+        &clocks,
+        &spawner,
+    ) {
+        log::error!("Failed to init sensor: {:?}", e);
+    }
+
+    // Init display
+    if let Err(e) = display::init(
+        gpio.pins.gpio19,
+        gpio.pins.gpio18,
+        peripherals.I2C1,
+        &clocks,
+        &spawner,
+    ) {
+        log::error!("Failed to init display: {:?}", e);
+    }
 }

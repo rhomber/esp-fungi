@@ -404,6 +404,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-hdc1080-rs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7b1ec4b40e49187422cc8c8c5a1f8fa82b816ff6f3877276dde32b854a733af"
+dependencies = [
+ "embedded-hal 0.2.7",
+]
+
+[[package]]
 name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -523,6 +532,7 @@ dependencies = [
  "embedded-graphics",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
+ "embedded-hdc1080-rs",
  "embedded-io",
  "embedded-svc",
  "esp-alloc",
