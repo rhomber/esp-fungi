@@ -65,7 +65,7 @@ async fn emitter(
 ) {
     loop {
         let msg = match dev.read() {
-            Ok((temp,rh )) => {
+            Ok((temp, rh)) => {
                 if temp > 0_f32 && rh > 0_f32 {
                     log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
 
