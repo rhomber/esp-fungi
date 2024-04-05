@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+mod display;
 mod error;
 mod network;
 
@@ -9,12 +10,10 @@ extern crate alloc;
 use core::mem::MaybeUninit;
 use embassy_executor::Spawner;
 use esp_backtrace as _;
-use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*, Delay, Rtc};
+use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*, Delay, IO};
 use esp_println::println;
 
-use esp_wifi::{initialize, EspWifiInitFor};
-
-use esp_hal::{timer::TimerGroup, Rng};
+use esp_hal::timer::TimerGroup;
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
@@ -39,6 +38,7 @@ async fn main(spawner: Spawner) {
 
     let peripherals = Peripherals::take();
     let system = peripherals.SYSTEM.split();
+    let gpio = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
     let clocks = ClockControl::max(system.clock_control).freeze();
     let mut delay = Delay::new(&clocks);
@@ -49,7 +49,18 @@ async fn main(spawner: Spawner) {
     // Init embassy
     embassy::init(&clocks, timer_group0);
 
-    // init network
+    // Init display
+    if let Err(e) = display::init(
+        gpio.pins.gpio19,
+        gpio.pins.gpio18,
+        peripherals.I2C0,
+        &clocks,
+        &spawner
+    ) {
+        log::error!("Failed to init display: {:?}", e);
+    }
+
+    // Init network
     network::init(
         peripherals.WIFI,
         peripherals.RNG,
@@ -58,9 +69,4 @@ async fn main(spawner: Spawner) {
         &clocks,
     )
     .expect("failed to init network");
-
-    loop {
-        println!("Loop...");
-        delay.delay_ms(500u32);
-    }
 }

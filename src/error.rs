@@ -1,4 +1,3 @@
-use alloc::format;
 use alloc::string::String;
 use core::fmt;
 use esp_wifi::wifi::WifiError;
@@ -7,9 +6,16 @@ use esp_wifi::InitializationError;
 pub type Result<T> = core::result::Result<T, Error>;
 
 pub enum Error {
-    GeneralFault { msg: String },
-    WifiInit { e: InitializationError },
-    Wifi { e: WifiError },
+    #[allow(dead_code)]
+    GeneralFault {
+        msg: String,
+    },
+    WifiInit {
+        e: InitializationError,
+    },
+    Wifi {
+        e: WifiError,
+    },
 }
 
 impl fmt::Display for Error {
@@ -34,6 +40,7 @@ impl fmt::Debug for Error {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn general_fault(msg: String) -> Error {
     Error::GeneralFault { msg }
 }
