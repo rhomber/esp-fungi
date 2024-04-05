@@ -2,11 +2,14 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+mod error;
+mod network;
+
 extern crate alloc;
 use core::mem::MaybeUninit;
 use embassy_executor::Spawner;
 use esp_backtrace as _;
-use esp_hal::{clock::ClockControl, peripherals::Peripherals, prelude::*, Delay, embassy, Rtc};
+use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*, Delay, Rtc};
 use esp_println::println;
 
 use esp_wifi::{initialize, EspWifiInitFor};
@@ -28,6 +31,12 @@ fn init_heap() {
 async fn main(spawner: Spawner) {
     init_heap();
 
+    // setup logger
+    // To change the log_level change the env section in .cargo/config.toml
+    // or remove it and set ESP_LOGLEVEL manually before running cargo run
+    // this requires a clean rebuild because of https://github.com/rust-lang/cargo/issues/10358
+    esp_println::logger::init_logger_from_env();
+
     let peripherals = Peripherals::take();
     let system = peripherals.SYSTEM.split();
 
@@ -36,25 +45,20 @@ async fn main(spawner: Spawner) {
 
     let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks);
     let timer_group1 = TimerGroup::new(peripherals.TIMG1, &clocks);
-    
+
     // Init embassy
     embassy::init(&clocks, timer_group0);
 
-    // setup logger
-    // To change the log_level change the env section in .cargo/config.toml
-    // or remove it and set ESP_LOGLEVEL manually before running cargo run
-    // this requires a clean rebuild because of https://github.com/rust-lang/cargo/issues/10358
-    esp_println::logger::init_logger_from_env();
-    log::info!("Logger is setup");
-    println!("Hello world!");
-    let _init = initialize(
-        EspWifiInitFor::Wifi,
-        timer_group1.timer0,
-        Rng::new(peripherals.RNG),
+    // init network
+    network::init(
+        peripherals.WIFI,
+        peripherals.RNG,
+        timer_group1,
         system.radio_clock_control,
         &clocks,
     )
-    .unwrap();
+    .expect("failed to init network");
+
     loop {
         println!("Loop...");
         delay.delay_ms(500u32);
