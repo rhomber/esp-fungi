@@ -2,19 +2,28 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+mod config;
 mod display;
 mod error;
 mod network;
 mod sensor;
 
 extern crate alloc;
+
+use alloc::sync::Arc;
 use core::mem::MaybeUninit;
 use embassy_executor::Spawner;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::pubsub::PubSubChannel;
+use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*, Delay, IO};
 use esp_println::println;
 
+use crate::config::Config;
+use crate::sensor::ChannelMessage;
 use esp_hal::timer::TimerGroup;
+
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
@@ -30,6 +39,9 @@ fn init_heap() {
 #[main]
 async fn main(spawner: Spawner) {
     init_heap();
+
+    // static config
+    let cfg = Config::new(500, 10000).expect("Failed to load config");
 
     // setup logger
     // To change the log_level change the env section in .cargo/config.toml
@@ -50,17 +62,20 @@ async fn main(spawner: Spawner) {
     embassy::init(&clocks, timer_group0);
 
     // Init network
-    network::init(
+    if let Err(e) = network::init(
+        cfg.clone(),
         peripherals.WIFI,
         peripherals.RNG,
         timer_group1,
         system.radio_clock_control,
         &clocks,
-    )
-    .expect("failed to init network");
+    ) {
+        log::error!("Failed to init network: {:?}", e);
+    }
 
     // Init sensor
     if let Err(e) = sensor::init(
+        cfg.clone(),
         gpio.pins.gpio14,
         gpio.pins.gpio15,
         peripherals.I2C0,
@@ -72,6 +87,7 @@ async fn main(spawner: Spawner) {
 
     // Init display
     if let Err(e) = display::init(
+        cfg.clone(),
         gpio.pins.gpio19,
         gpio.pins.gpio18,
         peripherals.I2C1,

@@ -1,4 +1,4 @@
-use embassy_net::{Config, Stack, StackResources};
+use embassy_net::{Config as NetConfig, Stack, StackResources};
 use esp_hal::clock::Clocks;
 use esp_hal::peripherals::{RNG, TIMG1, WIFI};
 use esp_hal::system::RadioClockControl;
@@ -8,9 +8,11 @@ use esp_wifi::wifi::WifiStaDevice;
 use esp_wifi::{initialize, EspWifiInitFor};
 use static_cell::make_static;
 
+use crate::config::Config;
 use crate::error::{map_wifi_err, map_wifi_init_err, Result};
 
 pub(crate) fn init(
+    cfg: Config,
     wifi: WIFI,
     rng: RNG,
     timer_group: TimerGroup<TIMG1>,
@@ -29,7 +31,7 @@ pub(crate) fn init(
     let (wifi_interface, controller) =
         esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).map_err(map_wifi_err)?;
 
-    let config = Config::dhcpv4(Default::default());
+    let config = NetConfig::dhcpv4(Default::default());
 
     let seed = 1234; // very random, very secure seed
 

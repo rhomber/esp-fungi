@@ -2,6 +2,7 @@ use alloc::format;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 
+use crate::config::Config;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -22,6 +23,7 @@ use ssd1306::{I2CDisplayInterface, Ssd1306};
 use crate::error::{map_embassy_spawn_err, Result};
 
 pub(crate) fn init<SDA, SDA_, SCL, SCL_>(
+    cfg: Config,
     sda: SDA,
     scl: SCL,
     i2c0: I2C1,

@@ -1,8 +1,11 @@
 use alloc::format;
 use embassy_executor::Spawner;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::pubsub::{Error, PubSubChannel, Publisher, Subscriber};
 use embassy_time::{Duration, Timer};
 use embedded_hal::delay::DelayNs;
 
+use crate::config::Config;
 #[cfg(feature = "hdc1080")]
 use embedded_hdc1080_rs::Hdc1080;
 use esp_hal::clock::Clocks;
@@ -14,9 +17,13 @@ use esp_hal::Delay;
 use esp_println::println;
 use fugit::RateExtU32;
 
-use crate::error::{general_fault, map_embassy_spawn_err, Result};
+use crate::error::{general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
+
+pub(crate) static CHANNEL: PubSubChannel<CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1> =
+    PubSubChannel::new();
 
 pub(crate) fn init<SDA, SDA_, SCL, SCL_>(
+    cfg: Config,
     sda: SDA,
     scl: SCL,
     i2c0: I2C0,
@@ -36,27 +43,59 @@ where
     let dev = Device::new(i2c, delay)
         .map_err(|e| general_fault(format!("failed to create sensor device: {:?}", e)))?;
 
-    spawner.spawn(emitter(dev)).map_err(map_embassy_spawn_err)?;
+    spawner
+        .spawn(emitter(
+            cfg,
+            dev,
+            CHANNEL.publisher().map_err(map_embassy_pub_sub_err)?,
+        ))
+        .map_err(map_embassy_spawn_err)?;
 
     Ok(())
 }
 
 #[embassy_executor::task]
-async fn emitter(mut dev: Device<'static, I2C0>) {
+async fn emitter(
+    cfg: Config,
+    mut dev: Device<'static, I2C0>,
+    mut publisher: Publisher<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>,
+) {
     loop {
-        match dev.read() {
+        let msg = match dev.read() {
             Ok((temp, hum)) => {
-                println!("Temp: {}, Humidity: {}", temp, hum);
+                if temp > 0_f32 && hum > 0_f32 {
+                    log::info!("Temp: {}, Humidity: {}", temp, hum);
 
-                Timer::after(Duration::from_millis(5_000)).await;
+                    Some(ChannelMessage { temp, hum })
+                } else {
+                    log::error!("Failed to read from sensor (temp: {}, hum: {})", temp, hum);
+
+                    None
+                }
             }
             Err(e) => {
                 log::error!("Failed to read from sensor: {:?}", e);
 
-                Timer::after(Duration::from_millis(10_000)).await;
+                None
             }
+        };
+
+        let is_ok = msg.is_some();
+
+        publisher.publish_immediate(msg);
+
+        if is_ok {
+            Timer::after(Duration::from_millis(cfg.sensor_delay_ms() as u64)).await;
+        } else {
+            Timer::after(Duration::from_millis(cfg.sensor_delay_err_ms() as u64)).await;
         }
     }
+}
+
+#[derive(Clone)]
+pub(crate) struct ChannelMessage {
+    pub(crate) temp: f32,
+    pub(crate) hum: f32,
 }
 
 #[cfg(feature = "hdc1080")]
