@@ -19,6 +19,8 @@ use fugit::RateExtU32;
 
 use crate::error::{general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
 
+pub type SensorSubscriber = Subscriber<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>;
+
 pub(crate) static CHANNEL: PubSubChannel<CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1> =
     PubSubChannel::new();
 

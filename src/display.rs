@@ -1,5 +1,7 @@
 use alloc::format;
 use embassy_executor::Spawner;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pubsub::{Subscriber, WaitResult};
 use embassy_time::{Duration, Timer};
 
 use crate::config::Config;
@@ -20,7 +22,9 @@ use profont::PROFONT_7_POINT;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
-use crate::error::{map_embassy_spawn_err, Result};
+use crate::error::{map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
+use crate::sensor;
+use crate::sensor::{ChannelMessage, SensorSubscriber};
 
 pub(crate) fn init<SDA, SDA_, SCL, SCL_>(
     cfg: Config,
@@ -125,15 +129,31 @@ where
         delay.delay_ms(5_u32);
     }
 
-    spawner.spawn(simples()).map_err(map_embassy_spawn_err)?;
+    let sensor_subscriber = sensor::CHANNEL.subscriber()
+        .map_err(map_embassy_pub_sub_err)?;
+
+    spawner.spawn(simples(sensor_subscriber)).map_err(map_embassy_spawn_err)?;
 
     Ok(())
 }
 
 #[embassy_executor::task]
-async fn simples() {
+async fn simples(mut sensor_subscriber: SensorSubscriber) {
     loop {
-        log::info!("simples loopy");
-        Timer::after(Duration::from_millis(1_000)).await;
+        match sensor_subscriber.next_message().await {
+            WaitResult::Lagged(count) => {
+                log::warn!("display sensor subscriber lagged by {} messages", count);
+
+                // Some sleep to avoid thrashing.
+                Timer::after(Duration::from_millis(100)).await;
+                continue;
+            }
+            WaitResult::Message(Some(msg)) => {
+                log::info!("Display got sensor msg - temp: {}, hum: {}", msg.temp, msg.hum);
+            }
+            WaitResult::Message(None) => {
+                log::warn!("TODO: No sensor available!");
+            }
+        }
     }
 }
