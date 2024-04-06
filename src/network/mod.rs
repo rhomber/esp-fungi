@@ -1,15 +1,18 @@
+mod wifi;
+
+use alloc::boxed::Box;
+use embassy_executor::Spawner;
 use embassy_net::{Config as NetConfig, Stack, StackResources};
 use esp_hal::clock::Clocks;
 use esp_hal::peripherals::{RNG, TIMG1, WIFI};
 use esp_hal::system::RadioClockControl;
 use esp_hal::timer::TimerGroup;
 use esp_hal::Rng;
-use esp_wifi::wifi::WifiStaDevice;
+use esp_wifi::wifi::{WifiDevice, WifiStaDevice};
 use esp_wifi::{initialize, EspWifiInitFor};
-use static_cell::make_static;
 
 use crate::config::Config;
-use crate::error::{map_wifi_err, map_wifi_init_err, Result};
+use crate::error::{map_embassy_spawn_err, map_wifi_err, map_wifi_init_err, Result};
 
 pub(crate) fn init(
     cfg: Config,
@@ -18,6 +21,7 @@ pub(crate) fn init(
     timer_group: TimerGroup<TIMG1>,
     radio_clocks: RadioClockControl,
     clocks: &Clocks,
+    spawner: &Spawner,
 ) -> Result<()> {
     let init = initialize(
         EspWifiInitFor::Wifi,
@@ -32,16 +36,26 @@ pub(crate) fn init(
         esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).map_err(map_wifi_err)?;
 
     let config = NetConfig::dhcpv4(Default::default());
-
+    let stack_resources = Box::leak(Box::new(StackResources::<3>::new()));
     let seed = 1234; // very random, very secure seed
 
-    // TODO: What is stack for? (the variable i mean)
-    let _stack = &*make_static!(Stack::new(
-        wifi_interface,
-        config,
-        make_static!(StackResources::<3>::new()),
-        seed
-    ));
+    let stack = Stack::new(wifi_interface, config, stack_resources, seed);
+    let stack = Box::leak(Box::new(stack));
+
+    spawner
+        .spawn(net_stack(stack))
+        .map_err(map_embassy_spawn_err)?;
+
+    spawner
+        .spawn(wifi::connection(controller))
+        .map_err(map_embassy_spawn_err)?;
 
     Ok(())
+}
+
+#[embassy_executor::task]
+pub async fn net_stack(stack: &'static Stack<WifiDevice<'static, WifiStaDevice>>) {
+    log::info!("Started: Network stack task");
+
+    stack.run().await
 }

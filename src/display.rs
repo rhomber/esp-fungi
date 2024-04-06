@@ -1,8 +1,6 @@
 use alloc::format;
-use alloc::string::{String, ToString};
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::pubsub::{Subscriber, WaitResult};
+use embassy_sync::pubsub::WaitResult;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::mono_font::iso_8859_1::{FONT_10X20, FONT_6X12};
 use num_traits::float::Float;
@@ -18,10 +16,8 @@ use esp_hal::gpio::{InputPin, OutputPin};
 use esp_hal::i2c::I2C;
 use esp_hal::peripheral::Peripheral;
 use esp_hal::peripherals::I2C1;
-use esp_hal::{prelude::*, spi::master::prelude::*, Delay};
-use esp_println::println;
 use fugit::RateExtU32;
-use ssd1306::mode::{BasicMode, BufferedGraphicsMode};
+use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 

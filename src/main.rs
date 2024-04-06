@@ -10,18 +10,12 @@ mod sensor;
 
 extern crate alloc;
 
-use alloc::sync::Arc;
 use core::mem::MaybeUninit;
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::pubsub::PubSubChannel;
-use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
-use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*, Delay, IO};
-use esp_println::println;
+use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*, IO};
 
 use crate::config::Config;
-use crate::sensor::ChannelMessage;
 use esp_hal::timer::TimerGroup;
 
 #[global_allocator]
@@ -53,6 +47,12 @@ async fn main(spawner: Spawner) {
     let system = peripherals.SYSTEM.split();
     let gpio = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
+    esp_hal::interrupt::enable(
+        esp_hal::peripherals::Interrupt::GPIO,
+        esp_hal::interrupt::Priority::Priority1,
+    )
+    .unwrap();
+
     let clocks = ClockControl::max(system.clock_control).freeze();
 
     let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks);
@@ -60,6 +60,18 @@ async fn main(spawner: Spawner) {
 
     // Init embassy
     embassy::init(&clocks, timer_group0);
+
+    // Init display
+    if let Err(e) = display::init(
+        cfg.clone(),
+        gpio.pins.gpio19,
+        gpio.pins.gpio18,
+        peripherals.I2C1,
+        &clocks,
+        &spawner,
+    ) {
+        log::error!("Failed to init display: {:?}", e);
+    }
 
     // Init network
     if let Err(e) = network::init(
@@ -69,6 +81,7 @@ async fn main(spawner: Spawner) {
         timer_group1,
         system.radio_clock_control,
         &clocks,
+        &spawner,
     ) {
         log::error!("Failed to init network: {:?}", e);
     }
@@ -83,17 +96,5 @@ async fn main(spawner: Spawner) {
         &spawner,
     ) {
         log::error!("Failed to init sensor: {:?}", e);
-    }
-
-    // Init display
-    if let Err(e) = display::init(
-        cfg.clone(),
-        gpio.pins.gpio19,
-        gpio.pins.gpio18,
-        peripherals.I2C1,
-        &clocks,
-        &spawner,
-    ) {
-        log::error!("Failed to init display: {:?}", e);
     }
 }

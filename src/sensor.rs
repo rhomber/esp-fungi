@@ -1,9 +1,8 @@
 use alloc::format;
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
-use embassy_sync::pubsub::{Error, PubSubChannel, Publisher, Subscriber};
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex};
+use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber};
 use embassy_time::{Duration, Timer};
-use embedded_hal::delay::DelayNs;
 
 use crate::config::Config;
 #[cfg(feature = "hdc1080")]
@@ -14,7 +13,6 @@ use esp_hal::i2c::{Instance, I2C};
 use esp_hal::peripheral::Peripheral;
 use esp_hal::peripherals::I2C0;
 use esp_hal::Delay;
-use esp_println::println;
 use fugit::RateExtU32;
 
 use crate::error::{general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
@@ -61,7 +59,7 @@ where
 async fn emitter(
     cfg: Config,
     mut dev: Device<'static, I2C0>,
-    mut publisher: Publisher<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>,
+    publisher: Publisher<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>,
 ) {
     loop {
         let msg = match dev.read() {
