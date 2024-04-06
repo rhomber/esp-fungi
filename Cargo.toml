@@ -19,6 +19,9 @@ lto = 'fat'
 opt-level = 's'
 overflow-checks = false
 
+[profile.dev.package.esp-wifi]
+opt-level = 3
+
 [features]
 default = ["hdc1080"]
 hdc1080 = ["embedded-hdc1080-rs"]
@@ -27,7 +30,7 @@ hdc1080 = ["embedded-hdc1080-rs"]
 log = { version = "0.4.20" }
 static_cell = { version = "=1.2.0", features = ["nightly"] }
 
-esp-hal = { version = "0.16.0", features = [ "esp32", "async", "embassy", "embassy-time-timg0", "embassy-executor-thread", "embassy-integrated-timers"] }
+esp-hal = { version = "0.16.0", features = [ "esp32", "async", "rt", "vectored", "embassy", "embassy-time-timg0", "embassy-executor-thread", "embassy-integrated-timers"] }
 esp-backtrace = { version = "0.11.0", features = [
     "esp32",
     "exception-handler",
@@ -40,8 +43,11 @@ esp-wifi = { version = "0.4.0", features = [
     "esp32",
     "phy-enable-usb",
     "utils",
+    "wifi",
     "wifi-default",
-    "embassy-net"
+    #"wifi-logs",
+    "embassy-net",
+    "async",
 ] }
 
 heapless = { version = "0.8.0", default-features = false }

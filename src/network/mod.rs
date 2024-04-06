@@ -47,7 +47,7 @@ pub(crate) fn init(
         .map_err(map_embassy_spawn_err)?;
 
     spawner
-        .spawn(wifi::connection(controller))
+        .spawn(wifi::connection(stack, controller))
         .map_err(map_embassy_spawn_err)?;
 
     Ok(())

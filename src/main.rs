@@ -17,12 +17,13 @@ use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*
 
 use crate::config::Config;
 use esp_hal::timer::TimerGroup;
+use log::LevelFilter;
 
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
 fn init_heap() {
-    const HEAP_SIZE: usize = 32 * 1024;
+    const HEAP_SIZE: usize = 64 * 1024;
     static mut HEAP: MaybeUninit<[u8; HEAP_SIZE]> = MaybeUninit::uninit();
 
     unsafe {
@@ -47,11 +48,12 @@ async fn main(spawner: Spawner) {
     let system = peripherals.SYSTEM.split();
     let gpio = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
-    esp_hal::interrupt::enable(
+    if let Err(e) = esp_hal::interrupt::enable(
         esp_hal::peripherals::Interrupt::GPIO,
         esp_hal::interrupt::Priority::Priority1,
-    )
-    .unwrap();
+    ) {
+        log::error!("Failed to enable esp hal interrupt: {:?}", e);
+    }
 
     let clocks = ClockControl::max(system.clock_control).freeze();
 
