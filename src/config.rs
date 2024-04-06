@@ -1,4 +1,5 @@
 use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
@@ -16,17 +17,20 @@ static DEFAULT_SENSOR_DELAY_ERR_MS: u32 = 10000;
 
 #[derive(Clone)]
 pub(crate) struct Config {
-    slots: Arc<UnsafeCell<Vec<InnerConfig>>>,
+    slots: Arc<UnsafeCell<Vec<Arc<ConfigInstance>>>>,
 }
 
 impl Config {
     pub(crate) fn new(sensor_delay_ms: u32, sensor_delay_err_ms: u32) -> Result<Self> {
         let mut slots = Vec::new();
-        slots.push(InnerConfig::new(sensor_delay_ms, sensor_delay_err_ms));
+        slots.push(Arc::new(ConfigInstance::new(
+            sensor_delay_ms,
+            sensor_delay_err_ms,
+        )));
 
         // Initialize.
-        for i in 1..MAX_SLOTS {
-            slots.push(InnerConfig::default());
+        for _ in 1..MAX_SLOTS {
+            slots.push(Arc::new(ConfigInstance::default()));
         }
 
         let s = Self {
@@ -36,7 +40,7 @@ impl Config {
         Ok(s)
     }
 
-    fn active(&self) -> Result<&InnerConfig> {
+    pub(crate) fn load(&self) -> Result<Arc<ConfigInstance>> {
         let slot = HOT_SLOT.load(Ordering::Acquire);
 
         unsafe {
@@ -52,42 +56,13 @@ impl Config {
                     "failed to get Config at slot (slot index: {})",
                     slot
                 )))
+                .map(|v| v.clone())
         }
     }
 
-    fn update(&self, new: InnerConfig) -> Result<()> {
-        let mut slot: u8 = 0;
-        let mut attempts: u8 = 0;
-        loop {
-            let current_slot = COLD_SLOT.load(Ordering::Acquire);
-            let next_slot = if current_slot + 1 > MAX_SLOTS {
-                0
-            } else {
-                current_slot + 1
-            };
-
-            if COLD_SLOT
-                .compare_exchange(
-                    current_slot,
-                    next_slot,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                slot = next_slot;
-                break;
-            } else {
-                if attempts >= 100 {
-                    return Err(general_fault(format!(
-                        "Max attempts ({}) exceeded acquiring slot trying to update Config",
-                        attempts
-                    )));
-                }
-
-                attempts += 1;
-            }
-        }
+    #[allow(dead_code)]
+    fn update(&self, new: Arc<ConfigInstance>) -> Result<()> {
+        let slot = next_config_slot()?;
 
         unsafe {
             self.slots
@@ -104,48 +79,63 @@ impl Config {
 
         Ok(())
     }
+}
 
-    // Accessors
-    pub(crate) fn sensor_delay_ms(&self) -> u32 {
-        match self.active() {
-            Ok(a) => a.sensor_delay_ms,
-            Err(e) => {
-                log::warn!("Failed to get config ('sensor_delay_ms'): {:?}", e);
+fn next_config_slot() -> Result<u8> {
+    let mut attempts: u8 = 0;
+    loop {
+        let current_slot = COLD_SLOT.load(Ordering::Acquire);
+        let next_slot = if current_slot + 1 > MAX_SLOTS {
+            0
+        } else {
+            current_slot + 1
+        };
 
-                DEFAULT_SENSOR_DELAY_MS
+        if COLD_SLOT
+            .compare_exchange(
+                current_slot,
+                next_slot,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            return Ok(next_slot);
+        } else {
+            if attempts >= 100 {
+                return Err(general_fault(format!(
+                    "Max attempts ({}) exceeded acquiring slot trying to update Config",
+                    attempts
+                )));
             }
-        }
-    }
 
-    pub(crate) fn sensor_delay_err_ms(&self) -> u32 {
-        match self.active() {
-            Ok(a) => a.sensor_delay_err_ms,
-            Err(e) => {
-                log::warn!("Failed to get config ('sensor_delay_err_ms'): {:?}", e);
-
-                DEFAULT_SENSOR_DELAY_ERR_MS
-            }
+            attempts += 1;
         }
     }
 }
 
-struct InnerConfig {
-    sensor_delay_ms: u32,
-    sensor_delay_err_ms: u32,
+pub(crate) struct ConfigInstance {
+    pub(crate) wifi_ssid: String,
+    pub(crate) wifi_password: String,
+    pub(crate) sensor_delay_ms: u32,
+    pub(crate) sensor_delay_err_ms: u32,
 }
 
-impl InnerConfig {
+impl ConfigInstance {
     fn new(sensor_delay_ms: u32, sensor_delay_err_ms: u32) -> Self {
         Self {
             sensor_delay_ms,
             sensor_delay_err_ms,
+            ..Self::default()
         }
     }
 }
 
-impl Default for InnerConfig {
+impl Default for ConfigInstance {
     fn default() -> Self {
         Self {
+            wifi_ssid: env!("SSID").to_string(),
+            wifi_password: env!("PASSWORD").to_string(),
             sensor_delay_ms: DEFAULT_SENSOR_DELAY_MS,
             sensor_delay_err_ms: DEFAULT_SENSOR_DELAY_ERR_MS,
         }

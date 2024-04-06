@@ -62,35 +62,49 @@ async fn emitter(
     publisher: Publisher<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>,
 ) {
     loop {
-        let msg = match dev.read() {
-            Ok((temp, rh)) => {
-                if temp > 0_f32 && rh > 0_f32 {
-                    log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
+        if let Err(e) = emitter_poll(&cfg, &mut dev, &publisher).await {
+            log::warn!("Sensor emitter poll failed: {:?}", e);
+        }
+    }
+}
 
-                    Some(ChannelMessage { temp, rh })
-                } else {
-                    log::error!("Failed to read from sensor (temp: {}, rh: {})", temp, rh);
+async fn emitter_poll(
+    cfg: &Config,
+    dev: &mut Device<'static, I2C0>,
+    publisher: &Publisher<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>,
+) -> Result<()> {
+    let cfg = cfg.load()?;
 
-                    None
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to read from sensor: {:?}", e);
+    let msg = match dev.read() {
+        Ok((temp, rh)) => {
+            if temp > 0_f32 && rh > 0_f32 {
+                log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
+
+                Some(ChannelMessage { temp, rh })
+            } else {
+                log::error!("Failed to read from sensor (temp: {}, rh: {})", temp, rh);
 
                 None
             }
-        };
-
-        let is_ok = msg.is_some();
-
-        publisher.publish_immediate(msg);
-
-        if is_ok {
-            Timer::after(Duration::from_millis(cfg.sensor_delay_ms() as u64)).await;
-        } else {
-            Timer::after(Duration::from_millis(cfg.sensor_delay_err_ms() as u64)).await;
         }
+        Err(e) => {
+            log::error!("Failed to read from sensor: {:?}", e);
+
+            None
+        }
+    };
+
+    let is_ok = msg.is_some();
+
+    publisher.publish_immediate(msg);
+
+    if is_ok {
+        Timer::after(Duration::from_millis(cfg.sensor_delay_ms as u64)).await;
+    } else {
+        Timer::after(Duration::from_millis(cfg.sensor_delay_err_ms as u64)).await;
     }
+
+    Ok(())
 }
 
 #[derive(Clone)]

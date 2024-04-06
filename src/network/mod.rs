@@ -1,4 +1,4 @@
-mod wifi;
+pub(crate) mod wifi;
 
 use alloc::boxed::Box;
 use embassy_executor::Spawner;
@@ -47,7 +47,7 @@ pub(crate) fn init(
         .map_err(map_embassy_spawn_err)?;
 
     spawner
-        .spawn(wifi::connection(stack, controller))
+        .spawn(wifi::connection(cfg, stack, controller))
         .map_err(map_embassy_spawn_err)?;
 
     Ok(())

@@ -546,6 +546,7 @@ dependencies = [
  "log",
  "num-traits",
  "smoltcp",
+ "spin",
  "ssd1306",
  "static_cell",
 ]

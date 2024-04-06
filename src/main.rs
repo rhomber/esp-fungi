@@ -17,7 +17,6 @@ use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*
 
 use crate::config::Config;
 use esp_hal::timer::TimerGroup;
-use log::LevelFilter;
 
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();

@@ -38,7 +38,7 @@ static GAUGE_BOX_OFFSET_Y: i32 = 16;
 static GAUGE_TEXT_OFFSET_Y: i32 = (GAUGE_BOX_OFFSET_Y + GAUGE_FONT_HEIGHT as i32) - 4;
 
 pub(crate) fn init<SDA, SCL>(
-    cfg: Config,
+    _cfg: Config,
     sda: impl Peripheral<P = SDA> + 'static,
     scl: impl Peripheral<P = SCL> + 'static,
     i2c1: I2C1,
