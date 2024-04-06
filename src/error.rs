@@ -1,4 +1,5 @@
 use alloc::string::String;
+use core::convert::Infallible;
 use core::fmt;
 use display_interface::DisplayError;
 use embassy_executor::SpawnError;
@@ -31,6 +32,7 @@ pub enum Error {
     DisplayDraw {
         msg: String,
     },
+    Infallible,
 }
 
 impl fmt::Display for Error {
@@ -56,6 +58,9 @@ impl fmt::Display for Error {
             }
             Error::DisplayDraw { msg } => {
                 write!(f, "Display draw error: {:?}", msg)
+            }
+            Error::Infallible => {
+                write!(f, "Unexpected infallible error encountered")
             }
         }
     }
@@ -94,4 +99,8 @@ pub(crate) fn map_display_err(e: DisplayError) -> Error {
 
 pub(crate) fn display_draw_err(msg: String) -> Error {
     Error::DisplayDraw { msg }
+}
+
+pub(crate) fn map_infallible_err(_: Infallible) -> Error {
+    Error::Infallible
 }

@@ -96,14 +96,14 @@ where
         .map_err(map_embassy_pub_sub_err)?;
 
     spawner
-        .spawn(simples(display_renderer, sensor_subscriber))
+        .spawn(display_task(display_renderer, sensor_subscriber))
         .map_err(map_embassy_spawn_err)?;
 
     Ok(())
 }
 
 #[embassy_executor::task]
-async fn simples(
+async fn display_task(
     mut display_renderer: DisplayRenderer<'static>,
     mut sensor_subscriber: SensorSubscriber,
 ) {

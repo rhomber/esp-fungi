@@ -4,9 +4,6 @@ use spin::RwLock;
 
 use crate::error::Result;
 
-static DEFAULT_SENSOR_DELAY_MS: u32 = 5000;
-static DEFAULT_SENSOR_DELAY_ERR_MS: u32 = 10000;
-
 #[derive(Clone)]
 pub(crate) struct Config {
     instance: Arc<RwLock<Option<Arc<ConfigInstance>>>>,
@@ -43,6 +40,8 @@ pub(crate) struct ConfigInstance {
     pub(crate) wifi_password: String,
     pub(crate) sensor_delay_ms: u32,
     pub(crate) sensor_delay_err_ms: u32,
+    pub(crate) controls_min_press_ms: u32,
+    pub(crate) controls_min_hold_ms: u32,
 }
 
 impl ConfigInstance {
@@ -60,8 +59,10 @@ impl Default for ConfigInstance {
         Self {
             wifi_ssid: env!("SSID").to_string(),
             wifi_password: env!("PASSWORD").to_string(),
-            sensor_delay_ms: DEFAULT_SENSOR_DELAY_MS,
-            sensor_delay_err_ms: DEFAULT_SENSOR_DELAY_ERR_MS,
+            sensor_delay_ms: 5000,
+            sensor_delay_err_ms: 10000,
+            controls_min_press_ms: 150,
+            controls_min_hold_ms: 1500,
         }
     }
 }

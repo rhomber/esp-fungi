@@ -3,6 +3,7 @@
 #![feature(type_alias_impl_trait)]
 
 mod config;
+mod controls;
 mod display;
 mod error;
 mod network;
@@ -72,6 +73,11 @@ async fn main(spawner: Spawner) {
         &spawner,
     ) {
         log::error!("Failed to init display: {:?}", e);
+    }
+
+    // Init controls
+    if let Err(e) = controls::init(cfg.clone(), gpio.pins.gpio21, &spawner) {
+        log::error!("Failed to init controls: {:?}", e);
     }
 
     // Init network

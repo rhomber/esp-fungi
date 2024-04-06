@@ -22,6 +22,9 @@ overflow-checks = false
 [profile.dev.package.esp-wifi]
 opt-level = 3
 
+[profile.dev.package.esp-storage]
+opt-level = 3
+
 [features]
 default = ["hdc1080"]
 hdc1080 = ["embedded-hdc1080-rs"]
@@ -50,6 +53,7 @@ esp-wifi = { version = "0.4.0", features = [
     "embassy-net",
     "async",
 ] }
+esp-storage = { version = "0.3.0", features = ["esp32"] }
 
 heapless = { version = "0.8.0", default-features = false }
 smoltcp = { version = "0.11.0", default-features = false, features = [
@@ -68,6 +72,7 @@ embedded-svc = { version = "0.27.1", default-features = false, features = [] }
 embedded-io = {  version = "0.6.1" }
 embedded-hal = { version = "1.0.0" }
 embedded-hal-async = {  version = "1.0.0" }
+embedded-storage = { version = "0.3.1" }
 
 embassy-executor = { version = "0.5.0", features = ["nightly", "integrated-timers", "executor-thread"] }
 embassy-sync = { version = "0.5.0" }
