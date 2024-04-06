@@ -35,7 +35,7 @@ async fn connection_poll(
     stack: &'static Stack<WifiDevice<'static, WifiStaDevice>>,
     controller: &mut WifiController<'static>,
 ) -> Result<()> {
-    let cfg = cfg.load()?;
+    let cfg = cfg.load();
 
     match esp_wifi::wifi::get_wifi_state() {
         WifiState::StaConnected => {

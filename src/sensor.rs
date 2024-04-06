@@ -14,13 +14,16 @@ use esp_hal::peripheral::Peripheral;
 use esp_hal::peripherals::I2C0;
 use esp_hal::Delay;
 use fugit::RateExtU32;
+use spin::RwLock;
 
 use crate::error::{general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
 
-pub type SensorSubscriber =
-    Subscriber<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>;
+pub(crate) static METRICS: RwLock<Option<SensorMetrics>> = RwLock::new(None);
 
-pub(crate) static CHANNEL: PubSubChannel<CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1> =
+pub type SensorSubscriber =
+    Subscriber<'static, CriticalSectionRawMutex, Option<SensorMetrics>, 1, 2, 1>;
+
+pub(crate) static CHANNEL: PubSubChannel<CriticalSectionRawMutex, Option<SensorMetrics>, 1, 2, 1> =
     PubSubChannel::new();
 
 pub(crate) fn init<SDA, SDA_, SCL, SCL_>(
@@ -59,7 +62,7 @@ where
 async fn emitter(
     cfg: Config,
     mut dev: Device<'static, I2C0>,
-    publisher: Publisher<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>,
+    publisher: Publisher<'static, CriticalSectionRawMutex, Option<SensorMetrics>, 1, 2, 1>,
 ) {
     loop {
         if let Err(e) = emitter_poll(&cfg, &mut dev, &publisher).await {
@@ -71,16 +74,16 @@ async fn emitter(
 async fn emitter_poll(
     cfg: &Config,
     dev: &mut Device<'static, I2C0>,
-    publisher: &Publisher<'static, CriticalSectionRawMutex, Option<ChannelMessage>, 1, 2, 1>,
+    publisher: &Publisher<'static, CriticalSectionRawMutex, Option<SensorMetrics>, 1, 2, 1>,
 ) -> Result<()> {
-    let cfg = cfg.load()?;
+    let cfg = cfg.load();
 
     let msg = match dev.read() {
         Ok((temp, rh)) => {
             if temp > 0_f32 && rh > 0_f32 {
                 log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
 
-                Some(ChannelMessage { temp, rh })
+                Some(SensorMetrics { temp, rh })
             } else {
                 log::error!("Failed to read from sensor (temp: {}, rh: {})", temp, rh);
 
@@ -94,7 +97,16 @@ async fn emitter_poll(
         }
     };
 
-    let is_ok = msg.is_some();
+    let is_ok = match msg.as_ref() {
+        Some(metrics) => {
+            let _ = METRICS.write().insert(metrics.clone());
+            true
+        }
+        None => {
+            let _ = METRICS.write().take();
+            false
+        }
+    };
 
     publisher.publish_immediate(msg);
 
@@ -108,7 +120,7 @@ async fn emitter_poll(
 }
 
 #[derive(Clone)]
-pub(crate) struct ChannelMessage {
+pub(crate) struct SensorMetrics {
     pub(crate) temp: f32,
     pub(crate) rh: f32,
 }

@@ -25,7 +25,7 @@ use crate::error::{
     display_draw_err, map_display_err, map_embassy_pub_sub_err, map_embassy_spawn_err, Result,
 };
 use crate::sensor;
-use crate::sensor::{ChannelMessage, SensorSubscriber};
+use crate::sensor::{SensorMetrics, SensorSubscriber};
 
 static DISPLAY_WIDTH: u32 = 128;
 static DISPLAY_HALF_WIDTH: u32 = DISPLAY_WIDTH / 2;
@@ -171,7 +171,7 @@ impl<'d> DisplayRenderer<'d> {
         }
     }
 
-    fn apply_sensor_msg(&mut self, msg: ChannelMessage) {
+    fn apply_sensor_msg(&mut self, msg: SensorMetrics) {
         self.temp(msg.temp);
         self.rh(msg.rh);
     }
