@@ -6,6 +6,7 @@ mod config;
 mod controls;
 mod display;
 mod error;
+mod mister;
 mod network;
 mod sensor;
 
@@ -75,11 +76,6 @@ async fn main(spawner: Spawner) {
         log::error!("Failed to init display: {:?}", e);
     }
 
-    // Init controls
-    if let Err(e) = controls::init(cfg.clone(), gpio.pins.gpio21, &spawner) {
-        log::error!("Failed to init controls: {:?}", e);
-    }
-
     // Init network
     if let Err(e) = network::init(
         cfg.clone(),
@@ -103,5 +99,15 @@ async fn main(spawner: Spawner) {
         &spawner,
     ) {
         log::error!("Failed to init sensor: {:?}", e);
+    }
+
+    // Init mister
+    if let Err(e) = mister::init(cfg.clone(), gpio.pins.gpio17, gpio.pins.gpio22, &spawner) {
+        log::error!("Failed to init mister: {:?}", e);
+    }
+
+    // Init controls
+    if let Err(e) = controls::init(cfg.clone(), gpio.pins.gpio21, &spawner) {
+        log::error!("Failed to init controls: {:?}", e);
     }
 }

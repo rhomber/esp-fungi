@@ -61,8 +61,8 @@ impl Default for ConfigInstance {
             wifi_password: env!("PASSWORD").to_string(),
             sensor_delay_ms: 5000,
             sensor_delay_err_ms: 10000,
-            controls_min_press_ms: 150,
-            controls_min_hold_ms: 1500,
+            controls_min_press_ms: 200,
+            controls_min_hold_ms: 1000,
         }
     }
 }
