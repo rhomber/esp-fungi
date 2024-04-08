@@ -32,6 +32,9 @@ pub enum Error {
     DisplayDraw {
         msg: String,
     },
+    SensorFault {
+        msg: String,
+    },
     Infallible,
 }
 
@@ -59,6 +62,9 @@ impl fmt::Display for Error {
             Error::DisplayDraw { msg } => {
                 write!(f, "Display draw error: {:?}", msg)
             }
+            Error::SensorFault { msg } => {
+                write!(f, "Sensor fault: {:?}", msg)
+            }
             Error::Infallible => {
                 write!(f, "Unexpected infallible error encountered")
             }
@@ -75,6 +81,11 @@ impl fmt::Debug for Error {
 #[allow(dead_code)]
 pub(crate) fn general_fault(msg: String) -> Error {
     Error::GeneralFault { msg }
+}
+
+#[allow(dead_code)]
+pub(crate) fn sensor_fault(msg: String) -> Error {
+    Error::SensorFault { msg }
 }
 
 pub(crate) fn map_wifi_init_err(e: InitializationError) -> Error {

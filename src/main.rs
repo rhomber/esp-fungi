@@ -37,7 +37,7 @@ async fn main(spawner: Spawner) {
     init_heap();
 
     // static config
-    let cfg = Config::new(500, 10000).expect("Failed to load config");
+    let cfg = Config::default();
 
     // setup logger
     // To change the log_level change the env section in .cargo/config.toml
@@ -64,41 +64,47 @@ async fn main(spawner: Spawner) {
     // Init embassy
     embassy::init(&clocks, timer_group0);
 
-    // Init display
-    if let Err(e) = display::init(
-        cfg.clone(),
-        gpio.pins.gpio19,
-        gpio.pins.gpio18,
-        peripherals.I2C1,
-        &clocks,
-        &spawner,
-    ) {
-        log::error!("Failed to init display: {:?}", e);
+    if cfg.load().display_enabled {
+        // Init display
+        if let Err(e) = display::init(
+            cfg.clone(),
+            gpio.pins.gpio19,
+            gpio.pins.gpio18,
+            peripherals.I2C1,
+            &clocks,
+            &spawner,
+        ) {
+            log::error!("Failed to init display: {:?}", e);
+        }
     }
 
-    // Init network
-    if let Err(e) = network::init(
-        cfg.clone(),
-        peripherals.WIFI,
-        peripherals.RNG,
-        timer_group1,
-        system.radio_clock_control,
-        &clocks,
-        &spawner,
-    ) {
-        log::error!("Failed to init network: {:?}", e);
+    if cfg.load().network_enabled {
+        // Init network
+        if let Err(e) = network::init(
+            cfg.clone(),
+            peripherals.WIFI,
+            peripherals.RNG,
+            timer_group1,
+            system.radio_clock_control,
+            &clocks,
+            &spawner,
+        ) {
+            log::error!("Failed to init network: {:?}", e);
+        }
     }
 
-    // Init sensor
-    if let Err(e) = sensor::init(
-        cfg.clone(),
-        gpio.pins.gpio14,
-        gpio.pins.gpio15,
-        peripherals.I2C0,
-        &clocks,
-        &spawner,
-    ) {
-        log::error!("Failed to init sensor: {:?}", e);
+    if cfg.load().sensor_enabled {
+        // Init sensor
+        if let Err(e) = sensor::init(
+            cfg.clone(),
+            gpio.pins.gpio14,
+            gpio.pins.gpio15,
+            peripherals.I2C0,
+            &clocks,
+            &spawner,
+        ) {
+            log::error!("Failed to init sensor: {:?}", e);
+        }
     }
 
     // Init mister

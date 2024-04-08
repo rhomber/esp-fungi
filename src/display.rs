@@ -1,10 +1,11 @@
 use alloc::format;
+use alloc::string::ToString;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber, WaitResult};
 use embassy_time::{Duration, Timer};
-use embedded_graphics::mono_font::iso_8859_1::{FONT_10X20, FONT_6X12};
+use embedded_graphics::mono_font::iso_8859_1::{FONT_10X20, FONT_6X12, FONT_8X13};
 use num_traits::float::Float;
 
 use crate::config::Config;
@@ -28,11 +29,13 @@ use crate::error::{
     map_embassy_spawn_err, Result,
 };
 use crate::mister::{Mode as MisterMode, ModeChangedSubscriber as MisterModeChangedSubscriber};
+use crate::network::wifi::IP_ADDRESS;
 use crate::sensor::{SensorMetrics, SensorSubscriber};
 use crate::{mister, sensor};
 
 static DISPLAY_WIDTH: u32 = 128;
 static DISPLAY_HALF_WIDTH: u32 = DISPLAY_WIDTH / 2;
+static DISPLAY_HEIGHT: u32 = 64;
 
 static GAUGE_LABEL_OFFSET_Y: i32 = 12;
 static GAUGE_FONT_HEIGHT: u32 = 20;
@@ -40,6 +43,10 @@ static GAUGE_FONT_WIDTH: u32 = 10;
 static GAUGE_PULL_SIDE_PX: u32 = 0;
 static GAUGE_BOX_OFFSET_Y: i32 = 16;
 static GAUGE_TEXT_OFFSET_Y: i32 = (GAUGE_BOX_OFFSET_Y + GAUGE_FONT_HEIGHT as i32) - 4;
+static STATUS_BOX_HEIGHT: u32 = 24;
+static STATUS_BOX_PADDING_X: u32 = 8;
+static STATUS_BOX_PADDING_Y: u32 = 8;
+static STATUS_FONT_WIDTH: u32 = 8;
 
 type ChangeModeSubscriber = Subscriber<'static, CriticalSectionRawMutex, ChangeMode, 1, 1, 1>;
 pub(crate) type ChangeModePublisher =
@@ -48,7 +55,7 @@ pub(crate) static CHANGE_MODE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, Ch
     PubSubChannel::new();
 
 pub(crate) fn init<SDA, SCL>(
-    _cfg: Config,
+    cfg: Config,
     sda: impl Peripheral<P = SDA> + 'static,
     scl: impl Peripheral<P = SCL> + 'static,
     i2c1: I2C1,
@@ -94,7 +101,7 @@ where
 
     display.flush().map_err(map_display_err)?;
 
-    let mut display_renderer = DisplayRenderer::new(display, 0_f32, 0_f32);
+    let mut display_renderer = DisplayRenderer::new(cfg, display, 0_f32, 0_f32);
 
     // Initial draw
     display_renderer.draw()?;
@@ -204,6 +211,7 @@ async fn display_task_poll(
 }
 
 struct DisplayRenderer<'d> {
+    cfg: Config,
     display: Ssd1306<
         I2CInterface<I2C<'d, I2C1>>,
         DisplaySize128x64,
@@ -211,6 +219,7 @@ struct DisplayRenderer<'d> {
     >,
     bg_style: PrimitiveStyle<BinaryColor>,
     text_style: MonoTextStyle<'d, BinaryColor>,
+    status_text_style: MonoTextStyle<'d, BinaryColor>,
     stale: bool,
     temp: f32,
     rh: f32,
@@ -220,6 +229,7 @@ struct DisplayRenderer<'d> {
 
 impl<'d> DisplayRenderer<'d> {
     fn new(
+        cfg: Config,
         display: Ssd1306<
             I2CInterface<I2C<'d, I2C1>>,
             DisplaySize128x64,
@@ -235,11 +245,14 @@ impl<'d> DisplayRenderer<'d> {
             .build();
 
         let text_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+        let status_text_style = MonoTextStyle::new(&FONT_8X13, BinaryColor::On);
 
         Self {
+            cfg,
             display,
             bg_style,
             text_style,
+            status_text_style,
             stale: true,
             temp,
             rh,
@@ -316,7 +329,89 @@ impl<'d> DisplayRenderer<'d> {
         .draw(&mut self.display)
         .map_err(|e| display_draw_err(format!("{:?}", e)))?;
 
+        // Status Area
+        Rectangle::new(
+            Point::new(0, (DISPLAY_HEIGHT - STATUS_BOX_HEIGHT) as i32),
+            Size::new(DISPLAY_WIDTH, STATUS_BOX_HEIGHT),
+        )
+        .into_styled(self.bg_style)
+        .draw(&mut self.display)
+        .map_err(|e| display_draw_err(format!("{:?}", e)))?;
+
+        match self.mode {
+            Mode::MisterMode => {
+                match self.mister_mode {
+                    Some(MisterMode::Auto) => {
+                        Text::new(
+                            format!("AUTO {:.1}%", self.cfg.load().mister_auto_rh).as_str(),
+                            Point::new(
+                                STATUS_BOX_PADDING_X as i32,
+                                (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
+                            ),
+                            self.status_text_style,
+                        )
+                        .draw(&mut self.display)
+                        .map_err(|e| display_draw_err(format!("{:?}", e)))?;
+
+                        // TODO:
+                        self.draw_mister_status(MisterMode::On)?;
+                    }
+                    Some(mode) => {
+                        self.draw_mister_status(mode)?;
+                    }
+                    None => {}
+                }
+            }
+            Mode::Info => {
+                self.draw_info()?;
+            }
+        }
+
         self.display.flush().map_err(map_display_err)?;
+
+        Ok(())
+    }
+
+    fn draw_mister_status(&mut self, mode: MisterMode) -> Result<()> {
+        let text = match mode {
+            MisterMode::On => "ON",
+            MisterMode::Off => "OFF",
+            _ => unreachable!("Unexpected Mister Mode to render: {}", mode),
+        };
+
+        Text::with_alignment(
+            text,
+            Point::new(
+                (DISPLAY_WIDTH - STATUS_BOX_PADDING_X) as i32,
+                (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
+            ),
+            self.status_text_style,
+            Alignment::Right,
+        )
+        .draw(&mut self.display)
+        .map_err(|e| display_draw_err(format!("{:?}", e)))?;
+
+        Ok(())
+    }
+
+    fn draw_info(&mut self) -> Result<()> {
+        let ip = match IP_ADDRESS.read().as_ref() {
+            Some(ip) => ip.to_string(),
+            None => "NO WIFI".to_string(),
+        };
+
+        let x_offset = (DISPLAY_WIDTH - (ip.len() as u32 * STATUS_FONT_WIDTH)) / 2;
+
+        Text::new(
+            ip.as_str(),
+            Point::new(
+                x_offset as i32,
+                (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
+            ),
+            self.status_text_style,
+        )
+        .draw(&mut self.display)
+        .map_err(|e| display_draw_err(format!("{:?}", e)))?;
 
         Ok(())
     }
@@ -324,17 +419,13 @@ impl<'d> DisplayRenderer<'d> {
     // Accessors
 
     fn mode(&mut self, val: Mode) {
-        if val != self.mode {
-            self.mode = val;
-            self.stale = true
-        }
+        self.mode = val;
+        self.stale = true
     }
 
     fn mister_mode(&mut self, val: Option<MisterMode>) {
-        if val != self.mister_mode {
-            self.mister_mode = val;
-            self.stale = true
-        }
+        self.mister_mode = val;
+        self.stale = true
     }
 
     fn temp(&mut self, val: f32) {
@@ -354,7 +445,7 @@ impl<'d> DisplayRenderer<'d> {
 
 // Models
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub(crate) enum Mode {
     MisterMode,
     Info,

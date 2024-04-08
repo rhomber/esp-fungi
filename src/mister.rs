@@ -35,7 +35,7 @@ pub(crate) fn init(
     mister_pwr_pin: GpioPin<Unknown, MISTER_POWER_GPIO_PIN>,
     status_led_pin: GpioPin<Unknown, STATUS_LED_GPIO_PIN>,
     spawner: &Spawner,
-) -> crate::error::Result<()> {
+) -> Result<()> {
     spawner
         .spawn(mister_operation_task(
             cfg.clone(),
@@ -92,8 +92,8 @@ async fn mister_operation_task_poll(
     storage: &mut FlashStorage,
     mister_pwr_pin: &mut GpioPin<Output<PushPull>, MISTER_POWER_GPIO_PIN>,
     status_led_pin: &mut GpioPin<Output<PushPull>, STATUS_LED_GPIO_PIN>,
-    mut mode_changed_pub: &mut ModeChangedPublisher,
-    mut change_mode_sub: &mut ChangeModeSubscriber,
+    mode_changed_pub: &mut ModeChangedPublisher,
+    change_mode_sub: &mut ChangeModeSubscriber,
 ) -> Result<()> {
     match change_mode_sub.next_message().await {
         WaitResult::Lagged(count) => {
@@ -104,12 +104,12 @@ async fn mister_operation_task_poll(
         }
         WaitResult::Message(change_mode) => match change_mode.mode {
             Some(mode) => {
-                store_mode(storage, mode, &mut mode_changed_pub).await?;
+                store_mode(storage, mode, mode_changed_pub).await?;
 
                 // TODO: Apply mode.
             }
             None => {
-                let mode = toggle_mode(storage, &mut mode_changed_pub).await?;
+                let mode = toggle_mode(storage, mode_changed_pub).await?;
 
                 // TODO: Apply mode.
             }
@@ -185,7 +185,7 @@ async fn store_mode(
 
 // Models
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub(crate) enum Mode {
     Auto = 1,
     Off = 2,

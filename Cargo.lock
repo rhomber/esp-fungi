@@ -553,6 +553,7 @@ dependencies = [
  "heapless",
  "log",
  "num-traits",
+ "sensor-temp-humidity-sht40",
  "smoltcp",
  "spin",
  "ssd1306",
@@ -1247,6 +1248,25 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sensirion-i2c"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37f8a8f52f850f281f9faebd9dc09d68caa29d6ce1dfd3806686b316258768d6"
+dependencies = [
+ "embedded-hal 0.2.7",
+]
+
+[[package]]
+name = "sensor-temp-humidity-sht40"
+version = "0.2.601"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c1df2204f8c798660486bfa29f2c6fd48b26ec4b27b180c19efed931e17308e"
+dependencies = [
+ "embedded-hal 0.2.7",
+ "sensirion-i2c",
+]
 
 [[package]]
 name = "serde"

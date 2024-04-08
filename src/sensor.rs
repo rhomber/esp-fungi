@@ -14,9 +14,13 @@ use esp_hal::peripheral::Peripheral;
 use esp_hal::peripherals::I2C0;
 use esp_hal::Delay;
 use fugit::RateExtU32;
+#[cfg(feature = "sht40")]
+use sensor_temp_humidity_sht40::{I2CAddr, Precision, SHT40Driver, TempUnit};
 use spin::RwLock;
 
-use crate::error::{general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
+use crate::error::{
+    general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, sensor_fault, Result,
+};
 
 pub(crate) static METRICS: RwLock<Option<SensorMetrics>> = RwLock::new(None);
 
@@ -156,5 +160,39 @@ where
                 e
             ))
         })
+    }
+}
+
+#[cfg(feature = "sht40")]
+struct Device<'d, T>
+where
+    T: Instance,
+{
+    dev: SHT40Driver<I2C<'d, T>, Delay>,
+}
+
+#[cfg(feature = "sht40")]
+impl<'d, T> Device<'d, T>
+where
+    T: Instance,
+{
+    fn new(i2c: I2C<'d, T>, delay: Delay) -> Result<Self> {
+        let mut dev = SHT40Driver::new(i2c, I2CAddr::SHT4x_A, delay);
+
+        Ok(Self { dev })
+    }
+
+    fn read(&mut self) -> Result<(f32, f32)> {
+        let measurement = self
+            .dev
+            .get_temp_and_rh(Precision::High, TempUnit::MilliDegreesCelsius)
+            .map_err(|e| {
+                sensor_fault(format!("Failed to take measurement from sensor: {:?}", e))
+            })?;
+
+        return Ok((
+            measurement.temp as f32 / 1000_f32,
+            measurement.rel_hum_pcm as f32 / 1000_f32,
+        ));
     }
 }

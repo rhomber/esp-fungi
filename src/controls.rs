@@ -71,7 +71,10 @@ async fn controls_task_poll(
     display_change_mode_pub: &mut ChangeModePublisher,
     mister_change_mode_pub: &mut MisterChangeModePublisher,
 ) -> Result<()> {
-    mode_btn.wait_for_high().await.map_err(map_infallible_err)?;
+    mode_btn
+        .wait_for_rising_edge()
+        .await
+        .map_err(map_infallible_err)?;
 
     log::info!("Mode button activated ...");
 
@@ -94,7 +97,7 @@ async fn controls_task_poll(
                     mister_change_mode_pub,
                 )
                 .await?;
-                wait_for_low_of_ms(mode_btn, cfg.controls_min_press_ms).await?;
+                wait_for_low_of_ms(mode_btn, 300).await?;
                 handle_mode_button_event(
                     ButtonState::Released,
                     display_change_mode_pub,
@@ -128,7 +131,7 @@ async fn wait_for_low_of_ms(
         mode_btn.wait_for_low().await.map_err(map_infallible_err)?;
 
         match select(
-            mode_btn.wait_for_high(),
+            mode_btn.wait_for_rising_edge(),
             Timer::after(Duration::from_millis(duration_ms as u64)),
         )
         .await
