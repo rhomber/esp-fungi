@@ -1,7 +1,7 @@
 use alloc::format;
 use alloc::string::ToString;
 use embassy_executor::Spawner;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber, WaitResult};
 use embassy_time::{Duration, Timer};
@@ -28,7 +28,10 @@ use crate::error::{
     display_draw_err, general_fault, map_display_err, map_embassy_pub_sub_err,
     map_embassy_spawn_err, Result,
 };
-use crate::mister::{Mode as MisterMode, ModeChangedSubscriber as MisterModeChangedSubscriber};
+use crate::mister::{
+    Mode as MisterMode, ModeChangedSubscriber as MisterModeChangedSubscriber,
+    Status as MisterStatus, Status, StatusChangedSubscriber as MisterStatusChangedSubscriber,
+};
 use crate::network::wifi::IP_ADDRESS;
 use crate::sensor::{SensorMetrics, SensorSubscriber};
 use crate::{mister, sensor};
@@ -120,6 +123,9 @@ where
             mister::MODE_CHANGED_CHANNEL
                 .subscriber()
                 .map_err(map_embassy_pub_sub_err)?,
+            mister::STATUS_CHANGED_CHANNEL
+                .subscriber()
+                .map_err(map_embassy_pub_sub_err)?,
         ))
         .map_err(map_embassy_spawn_err)?;
 
@@ -132,6 +138,7 @@ async fn display_task(
     mut change_mode_sub: ChangeModeSubscriber,
     mut sensor_sub: SensorSubscriber,
     mut mister_mode_changed_sub: MisterModeChangedSubscriber,
+    mut mister_status_changed_sub: MisterStatusChangedSubscriber,
 ) {
     loop {
         if let Err(e) = display_task_poll(
@@ -139,6 +146,7 @@ async fn display_task(
             &mut change_mode_sub,
             &mut sensor_sub,
             &mut mister_mode_changed_sub,
+            &mut mister_status_changed_sub,
         )
         .await
         {
@@ -156,15 +164,17 @@ async fn display_task_poll(
     change_mode_sub: &mut ChangeModeSubscriber,
     sensor_sub: &mut SensorSubscriber,
     mister_mode_changed_sub: &mut MisterModeChangedSubscriber,
+    mister_status_changed_sub: &mut MisterStatusChangedSubscriber,
 ) -> Result<()> {
-    match select3(
+    match select4(
         sensor_sub.next_message(),
         change_mode_sub.next_message(),
         mister_mode_changed_sub.next_message(),
+        mister_status_changed_sub.next_message(),
     )
     .await
     {
-        Either3::First(r) => match r {
+        Either4::First(r) => match r {
             WaitResult::Lagged(count) => {
                 return Err(general_fault(format!(
                     "display sensor subscriber lagged by {} messages",
@@ -178,7 +188,7 @@ async fn display_task_poll(
                 display_renderer.clear_sensor();
             }
         },
-        Either3::Second(r) => match r {
+        Either4::Second(r) => match r {
             WaitResult::Lagged(count) => {
                 return Err(general_fault(format!(
                     "display mode subscriber lagged by {} messages",
@@ -194,7 +204,7 @@ async fn display_task_poll(
                 }
             },
         },
-        Either3::Third(r) => match r {
+        Either4::Third(r) => match r {
             WaitResult::Lagged(count) => {
                 return Err(general_fault(format!(
                     "mister mode subscriber lagged by {} messages",
@@ -203,6 +213,17 @@ async fn display_task_poll(
             }
             WaitResult::Message(mode) => {
                 display_renderer.mister_mode(Some(mode));
+            }
+        },
+        Either4::Fourth(r) => match r {
+            WaitResult::Lagged(count) => {
+                return Err(general_fault(format!(
+                    "mister status subscriber lagged by {} messages",
+                    count
+                )));
+            }
+            WaitResult::Message(status) => {
+                display_renderer.mister_status(status);
             }
         },
     }
@@ -225,6 +246,7 @@ struct DisplayRenderer<'d> {
     rh: f32,
     mode: Mode,
     mister_mode: Option<MisterMode>,
+    mister_status: Status,
 }
 
 impl<'d> DisplayRenderer<'d> {
@@ -258,6 +280,7 @@ impl<'d> DisplayRenderer<'d> {
             rh,
             mode: Mode::default(),
             mister_mode: None,
+            mister_status: mister::STATUS.read().clone().unwrap_or(Status::Off),
         }
     }
 
@@ -339,29 +362,25 @@ impl<'d> DisplayRenderer<'d> {
         .map_err(|e| display_draw_err(format!("{:?}", e)))?;
 
         match self.mode {
-            Mode::MisterMode => {
-                match self.mister_mode {
-                    Some(MisterMode::Auto) => {
-                        Text::new(
-                            format!("AUTO {:.1}%", self.cfg.load().mister_auto_rh).as_str(),
-                            Point::new(
-                                STATUS_BOX_PADDING_X as i32,
-                                (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
-                            ),
-                            self.status_text_style,
-                        )
-                        .draw(&mut self.display)
-                        .map_err(|e| display_draw_err(format!("{:?}", e)))?;
+            Mode::MisterMode => match self.mister_mode {
+                Some(MisterMode::Auto) => {
+                    Text::new(
+                        format!("AUTO {}%", self.cfg.load().mister_auto_rh.ceil() as u32).as_str(),
+                        Point::new(
+                            STATUS_BOX_PADDING_X as i32,
+                            (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
+                        ),
+                        self.status_text_style,
+                    )
+                    .draw(&mut self.display)
+                    .map_err(|e| display_draw_err(format!("{:?}", e)))?;
 
-                        // TODO:
-                        self.draw_mister_status(MisterMode::On)?;
-                    }
-                    Some(mode) => {
-                        self.draw_mister_status(mode)?;
-                    }
-                    None => {}
+                    self.draw_mister_status(self.mister_status)?;
                 }
-            }
+                Some(MisterMode::On) => self.draw_mister_status(MisterStatus::On)?,
+                Some(MisterMode::Off) => self.draw_mister_status(MisterStatus::Off)?,
+                None => {}
+            },
             Mode::Info => {
                 self.draw_info()?;
             }
@@ -372,11 +391,11 @@ impl<'d> DisplayRenderer<'d> {
         Ok(())
     }
 
-    fn draw_mister_status(&mut self, mode: MisterMode) -> Result<()> {
-        let text = match mode {
-            MisterMode::On => "ON",
-            MisterMode::Off => "OFF",
-            _ => unreachable!("Unexpected Mister Mode to render: {}", mode),
+    fn draw_mister_status(&mut self, status: MisterStatus) -> Result<()> {
+        let text = match status {
+            MisterStatus::On => "ON",
+            MisterStatus::Off => "OFF",
+            MisterStatus::Fault => "FAULT",
         };
 
         Text::with_alignment(
@@ -425,6 +444,11 @@ impl<'d> DisplayRenderer<'d> {
 
     fn mister_mode(&mut self, val: Option<MisterMode>) {
         self.mister_mode = val;
+        self.stale = true
+    }
+
+    fn mister_status(&mut self, val: MisterStatus) {
+        self.mister_status = val;
         self.stale = true
     }
 

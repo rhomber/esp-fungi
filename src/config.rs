@@ -11,6 +11,7 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    #[allow(dead_code)]
     pub(crate) fn new(sensor_delay_ms: u32, sensor_delay_err_ms: u32) -> Self {
         Self::new_with_instance(ConfigInstance::new(sensor_delay_ms, sensor_delay_err_ms))
     }
@@ -53,10 +54,11 @@ pub(crate) struct ConfigInstance {
     pub(crate) sensor_delay_err_ms: u32,
     pub(crate) controls_min_press_ms: u32,
     pub(crate) controls_min_hold_ms: u32,
-    pub(crate) mister_auto_rh: f32
+    pub(crate) mister_auto_rh: f32,
 }
 
 impl ConfigInstance {
+    #[allow(dead_code)]
     fn new(sensor_delay_ms: u32, sensor_delay_err_ms: u32) -> Self {
         Self {
             sensor_delay_ms,
@@ -78,7 +80,7 @@ impl Default for ConfigInstance {
             sensor_delay_err_ms: 10000,
             controls_min_press_ms: 100,
             controls_min_hold_ms: 500,
-            mister_auto_rh: 90_f32
+            mister_auto_rh: 90_f32,
         }
     }
 }

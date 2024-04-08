@@ -177,7 +177,7 @@ where
     T: Instance,
 {
     fn new(i2c: I2C<'d, T>, delay: Delay) -> Result<Self> {
-        let mut dev = SHT40Driver::new(i2c, I2CAddr::SHT4x_A, delay);
+        let dev = SHT40Driver::new(i2c, I2CAddr::SHT4x_A, delay);
 
         Ok(Self { dev })
     }
