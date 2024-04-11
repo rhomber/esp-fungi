@@ -52,6 +52,7 @@ pub(crate) struct ConfigInstance {
     pub(crate) sensor_enabled: bool,
     pub(crate) sensor_delay_ms: u32,
     pub(crate) sensor_delay_err_ms: u32,
+    pub(crate) sensor_calibration: Option<f32>,
     pub(crate) controls_min_press_ms: u32,
     pub(crate) controls_min_hold_ms: u32,
     pub(crate) mister_auto_rh: f32,
@@ -78,9 +79,11 @@ impl Default for ConfigInstance {
             sensor_enabled: true,
             sensor_delay_ms: 500,
             sensor_delay_err_ms: 10000,
+            // Adjust for SHT45 which seems to be way higher than the others.
+            sensor_calibration: Some(5.00),
             controls_min_press_ms: 100,
             controls_min_hold_ms: 500,
-            mister_auto_rh: 90_f32,
+            mister_auto_rh: 88_f32,
         }
     }
 }

@@ -22,6 +22,8 @@ use crate::error::{
     general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, sensor_fault, Result,
 };
 
+static MAX_RH: f32 = 100_f32;
+
 pub(crate) static METRICS: RwLock<Option<SensorMetrics>> = RwLock::new(None);
 
 pub type SensorSubscriber =
@@ -46,7 +48,7 @@ where
 {
     let delay = Delay::new(&clocks);
 
-    let i2c = I2C::new(i2c0, sda, scl, 100.kHz(), &clocks);
+    let i2c = I2C::new(i2c0, sda, scl, 1.kHz(), &clocks);
 
     let dev = Device::new(i2c, delay)
         .map_err(|e| general_fault(format!("failed to create sensor device: {:?}", e)))?;
@@ -83,9 +85,18 @@ async fn emitter_poll(
     let cfg = cfg.load();
 
     let msg = match dev.read() {
-        Ok((temp, rh)) => {
+        Ok((temp, mut rh)) => {
             if temp > 0_f32 && rh > 0_f32 {
-                log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
+                if let Some(adj) = cfg.sensor_calibration {
+                    rh += adj;
+                    if rh > MAX_RH {
+                        rh = MAX_RH;
+                    }
+
+                    log::info!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
+                } else {
+                    log::info!("Sensor - Temp: {}, RH: {}%", temp, rh);
+                }
 
                 Some(SensorMetrics { temp, rh })
             } else {
