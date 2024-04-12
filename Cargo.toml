@@ -83,8 +83,8 @@ embassy-net = { version = "0.4.0", features = ["medium-ip", "tcp", "medium-ether
 embassy-net-driver = {  version = "0.2.0" }
 
 picoserve = { version = "0.10.2", features = ["embassy", "alloc"] }
-serde = { version = "1.0.197", default-features = false }
-serde_json = { version = "1.0.115", features = ["alloc"], default-features = false }
+serde = { version = "1.0.197", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.115", default-features = false, features = ["alloc"] }
 
 fugit = { version = "0.3.7" }
 num-traits = { version = "0.2.17", features = ["libm"], default-features = false }

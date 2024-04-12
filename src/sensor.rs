@@ -94,9 +94,9 @@ async fn emitter_poll(
                         rh = MAX_RH;
                     }
 
-                    log::info!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
+                    log::debug!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
                 } else {
-                    log::info!("Sensor - Temp: {}, RH: {}%", temp, rh);
+                    log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
                 }
 
                 Some(SensorMetrics { temp, rh })

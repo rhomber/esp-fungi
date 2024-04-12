@@ -1,11 +1,17 @@
+use alloc::format;
 use alloc::string::String;
 use core::convert::Infallible;
 use core::fmt;
+
 use display_interface::DisplayError;
 use embassy_executor::SpawnError;
 use embassy_sync::pubsub::Error as EmbassyPubSubError;
+use embedded_svc::io::asynch::Read;
 use esp_wifi::wifi::WifiError;
 use esp_wifi::InitializationError;
+use picoserve::response::{Connection, IntoResponse, Json, ResponseWriter, StatusCode};
+use picoserve::ResponseSent;
+use serde::{Serialize};
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -35,9 +41,6 @@ pub enum Error {
     },
     SensorFault {
         msg: String,
-    },
-    SerdeJson {
-        e: serde_json::Error,
     },
 }
 
@@ -71,9 +74,6 @@ impl fmt::Display for Error {
             Error::SensorFault { msg } => {
                 write!(f, "Sensor fault: {:?}", msg)
             }
-            Error::SerdeJson { e } => {
-                write!(f, "JSON error: {:?}", e)
-            }
         }
     }
 }
@@ -81,6 +81,38 @@ impl fmt::Display for Error {
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+impl IntoResponse for Error {
+    async fn write_to<R: Read, W: ResponseWriter<Error = R::Error>>(
+        self,
+        connection: Connection<'_, R>,
+        response_writer: W,
+    ) -> core::result::Result<ResponseSent, W::Error> {
+        response_writer
+            .write_response(
+                connection,
+                Json(ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    format!("{}", self),
+                ))
+                .into_response()
+                .with_status_code(StatusCode::INTERNAL_SERVER_ERROR),
+            )
+            .await
+    }
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct ApiError {
+    code: u16,
+    message: String,
+}
+
+impl ApiError {
+    fn new(code: u16, message: String) -> Self {
+        Self { code, message }
     }
 }
 
@@ -120,8 +152,4 @@ pub(crate) fn display_draw_err(msg: String) -> Error {
 
 pub(crate) fn map_infallible_err(_: Infallible) -> Error {
     Error::Infallible
-}
-
-pub(crate) fn map_json_err(e: serde_json::Error) -> Error {
-    Error::SerdeJson { e }
 }

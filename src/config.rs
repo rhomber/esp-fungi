@@ -92,7 +92,7 @@ impl Default for ConfigInstance {
             sensor_calibration_rh_adj: Some(5.00),
             controls_min_press_ms: 100,
             controls_min_hold_ms: 500,
-            mister_auto_rh: 88_f32,
+            mister_auto_rh: 90_f32,
             mister_auto_on_rh_adj: Some(-1_f32),
             mister_auto_duration_min_ms: 10000,
         }

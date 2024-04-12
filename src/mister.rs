@@ -11,7 +11,7 @@ use embedded_hal::digital::{OutputPin, StatefulOutputPin};
 use embedded_storage::{ReadStorage, Storage};
 use esp_hal::gpio::{GpioPin, Output, PushPull, Unknown};
 use esp_storage::FlashStorage;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use spin::RwLock;
 
 use crate::config::{Config, ConfigInstance};
@@ -469,7 +469,7 @@ pub(crate) fn is_mode_auto() -> bool {
 
 // Models
 
-#[derive(Copy, Clone, PartialEq, Debug, Serialize)]
+#[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub(crate) enum Mode {
     Auto = 1,
     Off = 2,
