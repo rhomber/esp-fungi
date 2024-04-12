@@ -52,10 +52,12 @@ pub(crate) struct ConfigInstance {
     pub(crate) sensor_enabled: bool,
     pub(crate) sensor_delay_ms: u32,
     pub(crate) sensor_delay_err_ms: u32,
-    pub(crate) sensor_calibration: Option<f32>,
+    pub(crate) sensor_calibration_rh_adj: Option<f32>,
     pub(crate) controls_min_press_ms: u32,
     pub(crate) controls_min_hold_ms: u32,
     pub(crate) mister_auto_rh: f32,
+    pub(crate) mister_auto_on_rh_adj: Option<f32>,
+    pub(crate) mister_auto_duration_min_ms: u32,
 }
 
 impl ConfigInstance {
@@ -65,6 +67,13 @@ impl ConfigInstance {
             sensor_delay_ms,
             sensor_delay_err_ms,
             ..Self::default()
+        }
+    }
+
+    pub(crate) fn mister_auto_on_rh(&self) -> f32 {
+        match self.mister_auto_on_rh_adj {
+            Some(adj) => self.mister_auto_rh + adj,
+            None => self.mister_auto_rh,
         }
     }
 }
@@ -80,10 +89,12 @@ impl Default for ConfigInstance {
             sensor_delay_ms: 500,
             sensor_delay_err_ms: 10000,
             // Adjust for SHT45 which seems to be way higher than the others.
-            sensor_calibration: Some(5.00),
+            sensor_calibration_rh_adj: Some(5.00),
             controls_min_press_ms: 100,
             controls_min_hold_ms: 500,
             mister_auto_rh: 88_f32,
+            mister_auto_on_rh_adj: Some(-1_f32),
+            mister_auto_duration_min_ms: 10000,
         }
     }
 }

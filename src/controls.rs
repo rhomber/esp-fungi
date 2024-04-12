@@ -6,7 +6,6 @@ use embassy_time::{Duration, Timer};
 use embedded_hal_async::digital::Wait;
 use esp_hal::gpio::{GpioPin, Input, PullDown, Unknown};
 use esp_hal::prelude::*;
-use esp_wifi::wifi::log_timestamp;
 
 use crate::config::{Config, ConfigInstance};
 use crate::display::{ChangeMode as DisplayChangeMode, ChangeModePublisher, Mode};
@@ -14,6 +13,7 @@ use crate::error::{map_embassy_pub_sub_err, map_embassy_spawn_err, map_infallibl
 use crate::mister::{
     ChangeMode as MisterChangeMode, ChangeModePublisher as MisterChangeModePublisher,
 };
+use crate::utils::get_time_ms;
 use crate::{display, mister};
 
 const MODE_BUTTON_GPIO_PIN: u8 = 21;
@@ -179,10 +179,4 @@ enum ButtonState {
     Pressed,
     Held,
     Released,
-}
-
-// Utils
-
-fn get_time_ms() -> u32 {
-    unsafe { log_timestamp() }
 }

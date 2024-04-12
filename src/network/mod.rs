@@ -1,3 +1,4 @@
+pub(crate) mod api;
 pub(crate) mod wifi;
 
 use alloc::boxed::Box;
@@ -13,6 +14,9 @@ use esp_wifi::{initialize, EspWifiInitFor};
 
 use crate::config::Config;
 use crate::error::{map_embassy_spawn_err, map_wifi_err, map_wifi_init_err, Result};
+use crate::network::api::WEB_TASK_POOL_SIZE;
+
+pub(crate) const STACK_POOL_SIZE: usize = WEB_TASK_POOL_SIZE + 3;
 
 pub(crate) fn init(
     cfg: Config,
@@ -36,7 +40,7 @@ pub(crate) fn init(
         esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).map_err(map_wifi_err)?;
 
     let config = NetConfig::dhcpv4(Default::default());
-    let stack_resources = Box::leak(Box::new(StackResources::<3>::new()));
+    let stack_resources = Box::leak(Box::new(StackResources::<STACK_POOL_SIZE>::new()));
     let seed = 1234; // very random, very secure seed
 
     let stack = Stack::new(wifi_interface, config, stack_resources, seed);
@@ -47,8 +51,10 @@ pub(crate) fn init(
         .map_err(map_embassy_spawn_err)?;
 
     spawner
-        .spawn(wifi::connection(cfg, stack, controller))
+        .spawn(wifi::connection(cfg.clone(), stack, controller))
         .map_err(map_embassy_spawn_err)?;
+
+    api::init(cfg, stack, spawner)?;
 
     Ok(())
 }

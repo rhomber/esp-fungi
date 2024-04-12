@@ -11,6 +11,7 @@ use embedded_hal::digital::{OutputPin, StatefulOutputPin};
 use embedded_storage::{ReadStorage, Storage};
 use esp_hal::gpio::{GpioPin, Output, PushPull, Unknown};
 use esp_storage::FlashStorage;
+use serde::Serialize;
 use spin::RwLock;
 
 use crate::config::{Config, ConfigInstance};
@@ -18,7 +19,8 @@ use crate::error::{
     general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, map_infallible_err, Result,
 };
 use crate::sensor;
-use crate::sensor::SensorSubscriber;
+use crate::sensor::{SensorMetrics, SensorSubscriber};
+use crate::utils::get_time_ms;
 
 const MISTER_POWER_GPIO_PIN: u8 = 17;
 const STATUS_LED_GPIO_PIN: u8 = 22;
@@ -97,6 +99,8 @@ async fn mister_operation_task(
 
     let mut mister_pwr_pin = mister_pwr_pin.into_push_pull_output();
 
+    let mut auto_state: Option<AutoState> = None;
+
     loop {
         if let Err(e) = mister_operation_task_poll(
             cfg.load(),
@@ -106,6 +110,7 @@ async fn mister_operation_task(
             &mut change_mode_sub,
             &mut status_changed_pub,
             &mut sensor_sub,
+            &mut auto_state,
         )
         .await
         {
@@ -126,6 +131,7 @@ async fn mister_operation_task_poll(
     change_mode_sub: &mut ChangeModeSubscriber,
     status_changed_pub: &mut StatusChangedPublisher,
     sensor_sub: &mut SensorSubscriber,
+    auto_state: &mut Option<AutoState>,
 ) -> Result<()> {
     match select(change_mode_sub.next_message(), sensor_sub.next_message()).await {
         Either::First(r) => match r {
@@ -150,29 +156,25 @@ async fn mister_operation_task_poll(
             if is_mode_auto() {
                 match r {
                     WaitResult::Lagged(count) => {
+                        change_status(Status::Fault, mister_pwr_pin, status_changed_pub).await?;
+
+                        // Clear state.
+                        let _ = auto_state.take();
+
                         return Err(general_fault(format!(
                             "sensor subscriber lagged by {} messages",
                             count
                         )));
                     }
                     WaitResult::Message(metrics) => {
-                        match metrics {
-                            Some(metrics) => {
-                                if metrics.rh < cfg.mister_auto_rh {
-                                    change_status(Status::On, mister_pwr_pin, status_changed_pub)
-                                        .await?;
-                                } else {
-                                    change_status(Status::Off, mister_pwr_pin, status_changed_pub)
-                                        .await?;
-                                }
-                            }
-                            None => {
-                                log::warn!("No metrics returned by sensor, setting mister status to 'Fault'");
-
-                                change_status(Status::Fault, mister_pwr_pin, status_changed_pub)
-                                    .await?;
-                            }
-                        }
+                        mister_auto_poll(
+                            cfg,
+                            auto_state,
+                            metrics,
+                            mister_pwr_pin,
+                            status_changed_pub,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -180,6 +182,101 @@ async fn mister_operation_task_poll(
     }
 
     Ok(())
+}
+
+struct AutoState {
+    status: Status,
+    cycle_start_time: u32,
+}
+
+impl AutoState {
+    fn new(status: Status, cycle_start_time: u32) -> Self {
+        Self {
+            status,
+            cycle_start_time,
+        }
+    }
+}
+
+async fn mister_auto_poll(
+    cfg: Arc<ConfigInstance>,
+    state: &mut Option<AutoState>,
+    metrics: Option<SensorMetrics>,
+    mister_pwr_pin: &mut GpioPin<Output<PushPull>, MISTER_POWER_GPIO_PIN>,
+    status_changed_pub: &mut StatusChangedPublisher,
+) -> Result<()> {
+    match metrics {
+        Some(metrics) => {
+            let status = STATUS.read().clone();
+            let rh_on = cfg.mister_auto_on_rh();
+            let rh_off = cfg.mister_auto_rh;
+
+            // Verify state is accurate.
+            if let Some(cur) = state.as_ref() {
+                if let Some(status) = status.as_ref() {
+                    if !cur.status.eq(status) {
+                        // Clear state.
+                        let _ = state.take();
+                    }
+                }
+            }
+
+            // Determine new status
+            let new_status = if metrics.rh <= rh_on {
+                Status::On
+            } else if metrics.rh >= rh_off {
+                Status::Off
+            } else {
+                // If rh between on and off threshold preserve status (either 'rising' or 'falling').
+                status.clone().unwrap_or(Status::Off)
+            };
+
+            // Change status with guarding against flapping too fast
+            if let Some(status) = status.as_ref() {
+                if !new_status.eq(status) {
+                    match state.take() {
+                        Some(mut cur) => {
+                            // Check threshold and ignore event if required.
+                            if (get_time_ms() - cur.cycle_start_time)
+                                >= cfg.mister_auto_duration_min_ms
+                            {
+                                cur.cycle_start_time = get_time_ms();
+
+                                change_status(new_status, mister_pwr_pin, status_changed_pub)
+                                    .await?;
+                            }
+
+                            let _ = state.insert(cur);
+
+                            Ok(())
+                        }
+                        None => {
+                            let _ = state.insert(AutoState::new(new_status, get_time_ms()));
+                            change_status(new_status, mister_pwr_pin, status_changed_pub).await
+                        }
+                    }
+                } else {
+                    // This just verifies pin state.
+                    change_status(new_status, mister_pwr_pin, status_changed_pub).await
+                }
+            } else {
+                // Assume first init (shouldn't ever be None here though).
+
+                // Clear state.
+                let _ = state.take();
+
+                change_status(new_status, mister_pwr_pin, status_changed_pub).await
+            }
+        }
+        None => {
+            log::warn!("No metrics returned by sensor, setting mister status to 'Fault'");
+
+            // Clear state.
+            let _ = state.take();
+
+            change_status(Status::Fault, mister_pwr_pin, status_changed_pub).await
+        }
+    }
 }
 
 #[embassy_executor::task]
@@ -372,7 +469,7 @@ pub(crate) fn is_mode_auto() -> bool {
 
 // Models
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug, Serialize)]
 pub(crate) enum Mode {
     Auto = 1,
     Off = 2,
@@ -429,7 +526,7 @@ impl Default for ChangeMode {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug, Serialize)]
 pub(crate) enum Status {
     Off,
     On,

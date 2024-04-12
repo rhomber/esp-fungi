@@ -14,6 +14,7 @@ pub enum Error {
     GeneralFault {
         msg: String,
     },
+    Infallible,
     WifiInit {
         e: InitializationError,
     },
@@ -35,7 +36,9 @@ pub enum Error {
     SensorFault {
         msg: String,
     },
-    Infallible,
+    SerdeJson {
+        e: serde_json::Error,
+    },
 }
 
 impl fmt::Display for Error {
@@ -43,6 +46,9 @@ impl fmt::Display for Error {
         match self {
             Error::GeneralFault { msg } => {
                 write!(f, "A general fault occurred: {}", msg)
+            }
+            Error::Infallible => {
+                write!(f, "Unexpected infallible error encountered")
             }
             Error::WifiInit { e } => {
                 write!(f, "Failed to init WIFI: {:?}", e)
@@ -65,8 +71,8 @@ impl fmt::Display for Error {
             Error::SensorFault { msg } => {
                 write!(f, "Sensor fault: {:?}", msg)
             }
-            Error::Infallible => {
-                write!(f, "Unexpected infallible error encountered")
+            Error::SerdeJson { e } => {
+                write!(f, "JSON error: {:?}", e)
             }
         }
     }
@@ -114,4 +120,8 @@ pub(crate) fn display_draw_err(msg: String) -> Error {
 
 pub(crate) fn map_infallible_err(_: Infallible) -> Error {
     Error::Infallible
+}
+
+pub(crate) fn map_json_err(e: serde_json::Error) -> Error {
+    Error::SerdeJson { e }
 }

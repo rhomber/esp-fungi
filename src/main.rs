@@ -9,6 +9,7 @@ mod error;
 mod mister;
 mod network;
 mod sensor;
+mod utils;
 
 extern crate alloc;
 

@@ -16,6 +16,7 @@ use esp_hal::Delay;
 use fugit::RateExtU32;
 #[cfg(feature = "sht40")]
 use sensor_temp_humidity_sht40::{I2CAddr, Precision, SHT40Driver, TempUnit};
+use serde::Serialize;
 use spin::RwLock;
 
 use crate::error::{
@@ -87,7 +88,7 @@ async fn emitter_poll(
     let msg = match dev.read() {
         Ok((temp, mut rh)) => {
             if temp > 0_f32 && rh > 0_f32 {
-                if let Some(adj) = cfg.sensor_calibration {
+                if let Some(adj) = cfg.sensor_calibration_rh_adj {
                     rh += adj;
                     if rh > MAX_RH {
                         rh = MAX_RH;
@@ -134,7 +135,7 @@ async fn emitter_poll(
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub(crate) struct SensorMetrics {
     pub(crate) temp: f32,
     pub(crate) rh: f32,
