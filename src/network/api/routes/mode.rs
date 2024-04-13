@@ -4,7 +4,7 @@ use picoserve::response::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::mister::{ACTIVE_MODE, ChangeModePublisher, Mode as MisterMode};
+use crate::mister::{ChangeModePublisher, Mode as MisterMode, ACTIVE_MODE};
 
 pub(crate) async fn handle_get() -> Json<GetModeResponse> {
     Json(GetModeResponse {

@@ -18,10 +18,10 @@ pub(crate) fn init(
         .route("/", get(status::handle_get))
         .route("/status", get(status::handle_get))
         .route("/mode", get(mode::handle_get)))
-        //.route(
-        //    "/mode",
-        //    post(move || {
-        //        mode::handle_change(change_mode_pub.clone())
-        //    }),
-        //))
+    //.route(
+    //    "/mode",
+    //    post(move || {
+    //        mode::handle_change(change_mode_pub.clone())
+    //    }),
+    //))
 }

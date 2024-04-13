@@ -1,5 +1,5 @@
 use alloc::format;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use embassy_executor::Spawner;
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -25,7 +25,7 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use crate::error::{
-    display_draw_err, general_fault, map_display_err, map_embassy_pub_sub_err,
+    display_draw_err, map_display_err, map_embassy_pub_sub_err,
     map_embassy_spawn_err, Result,
 };
 use crate::mister::{
@@ -58,7 +58,7 @@ pub(crate) static CHANGE_MODE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, Ch
     PubSubChannel::new();
 
 pub(crate) fn init<SDA, SCL>(
-    cfg: Config,
+    _cfg: Config,
     sda: impl Peripheral<P = SDA> + 'static,
     scl: impl Peripheral<P = SCL> + 'static,
     i2c1: I2C1,
@@ -104,7 +104,7 @@ where
 
     display.flush().map_err(map_display_err)?;
 
-    let mut display_renderer = DisplayRenderer::new(cfg, display, 0_f32, 0_f32);
+    let mut display_renderer = DisplayRenderer::new(display, 0_f32, 0_f32);
 
     // Initial draw
     display_renderer.draw()?;
@@ -176,10 +176,10 @@ async fn display_task_poll(
     {
         Either4::First(r) => match r {
             WaitResult::Lagged(count) => {
-                return Err(general_fault(format!(
-                    "display sensor subscriber lagged by {} messages",
-                    count
-                )));
+                log::warn!("display sensor subscriber lagged by {} messages", count);
+
+                // Ignore
+                return Ok(());
             }
             WaitResult::Message(Some(msg)) => {
                 display_renderer.apply_sensor_msg(msg);
@@ -190,10 +190,10 @@ async fn display_task_poll(
         },
         Either4::Second(r) => match r {
             WaitResult::Lagged(count) => {
-                return Err(general_fault(format!(
-                    "display mode subscriber lagged by {} messages",
-                    count
-                )));
+                log::warn!("display mode subscriber lagged by {} messages", count);
+
+                // Ignore
+                return Ok(());
             }
             WaitResult::Message(change_mode) => match change_mode.mode {
                 Some(mode) => {
@@ -206,10 +206,10 @@ async fn display_task_poll(
         },
         Either4::Third(r) => match r {
             WaitResult::Lagged(count) => {
-                return Err(general_fault(format!(
-                    "mister mode subscriber lagged by {} messages",
-                    count
-                )));
+                log::warn!("mister mode subscriber lagged by {} messages", count);
+
+                // Ignore
+                return Ok(());
             }
             WaitResult::Message(mode) => {
                 display_renderer.mister_mode(Some(mode));
@@ -217,10 +217,10 @@ async fn display_task_poll(
         },
         Either4::Fourth(r) => match r {
             WaitResult::Lagged(count) => {
-                return Err(general_fault(format!(
-                    "mister status subscriber lagged by {} messages",
-                    count
-                )));
+                log::warn!("mister status subscriber lagged by {} messages", count);
+
+                // Ignore
+                return Ok(());
             }
             WaitResult::Message(status) => {
                 display_renderer.mister_status(status);
@@ -232,7 +232,6 @@ async fn display_task_poll(
 }
 
 struct DisplayRenderer<'d> {
-    cfg: Config,
     display: Ssd1306<
         I2CInterface<I2C<'d, I2C1>>,
         DisplaySize128x64,
@@ -251,7 +250,6 @@ struct DisplayRenderer<'d> {
 
 impl<'d> DisplayRenderer<'d> {
     fn new(
-        cfg: Config,
         display: Ssd1306<
             I2CInterface<I2C<'d, I2C1>>,
             DisplaySize128x64,
@@ -270,7 +268,6 @@ impl<'d> DisplayRenderer<'d> {
         let status_text_style = MonoTextStyle::new(&FONT_8X13, BinaryColor::On);
 
         Self {
-            cfg,
             display,
             bg_style,
             text_style,
@@ -364,17 +361,12 @@ impl<'d> DisplayRenderer<'d> {
         match self.mode {
             Mode::MisterMode => match self.mister_mode {
                 Some(MisterMode::Auto) => {
-                    Text::new(
-                        format!("AUTO {}%", self.cfg.load().mister_auto_rh.ceil() as u32).as_str(),
-                        Point::new(
-                            STATUS_BOX_PADDING_X as i32,
-                            (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
-                        ),
-                        self.status_text_style,
-                    )
-                    .draw(&mut self.display)
-                    .map_err(|e| display_draw_err(format!("{:?}", e)))?;
+                    let text = match mister::ACTIVE_AUTO_RH.read().clone() {
+                        Some(rh) => format!("AUTO {}%", rh.ceil() as u32),
+                        None => "AUTO ??%".to_string(),
+                    };
 
+                    self.draw_general_status(text)?;
                     self.draw_mister_status(self.mister_status)?;
                 }
                 Some(MisterMode::On) => self.draw_mister_status(MisterStatus::On)?,
@@ -387,6 +379,27 @@ impl<'d> DisplayRenderer<'d> {
         }
 
         self.display.flush().map_err(map_display_err)?;
+
+        Ok(())
+    }
+
+    fn draw_general_status(&mut self, text: String) -> Result<()> {
+        let x_offset = if text.len() >= DISPLAY_HALF_WIDTH as usize {
+            (DISPLAY_WIDTH - (text.len() as u32 * STATUS_FONT_WIDTH)) / 2
+        } else {
+            STATUS_BOX_PADDING_X
+        };
+
+        Text::new(
+            text.as_str(),
+            Point::new(
+                x_offset as i32,
+                (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
+            ),
+            self.status_text_style,
+        )
+        .draw(&mut self.display)
+        .map_err(|e| display_draw_err(format!("{:?}", e)))?;
 
         Ok(())
     }
@@ -419,20 +432,7 @@ impl<'d> DisplayRenderer<'d> {
             None => "NO WIFI".to_string(),
         };
 
-        let x_offset = (DISPLAY_WIDTH - (ip.len() as u32 * STATUS_FONT_WIDTH)) / 2;
-
-        Text::new(
-            ip.as_str(),
-            Point::new(
-                x_offset as i32,
-                (DISPLAY_HEIGHT - STATUS_BOX_PADDING_Y) as i32,
-            ),
-            self.status_text_style,
-        )
-        .draw(&mut self.display)
-        .map_err(|e| display_draw_err(format!("{:?}", e)))?;
-
-        Ok(())
+        self.draw_general_status(ip)
     }
 
     // Accessors

@@ -11,7 +11,7 @@ use esp_wifi::wifi::WifiError;
 use esp_wifi::InitializationError;
 use picoserve::response::{Connection, IntoResponse, Json, ResponseWriter, StatusCode};
 use picoserve::ResponseSent;
-use serde::{Serialize};
+use serde::Serialize;
 
 pub type Result<T> = core::result::Result<T, Error>;
 

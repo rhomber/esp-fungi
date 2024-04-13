@@ -135,7 +135,7 @@ async fn emitter_poll(
     Ok(())
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct SensorMetrics {
     pub(crate) temp: f32,
     pub(crate) rh: f32,

@@ -62,6 +62,8 @@ async fn main(spawner: Spawner) {
     let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks);
     let timer_group1 = TimerGroup::new(peripherals.TIMG1, &clocks);
 
+    log::info!("main init: Started");
+
     // Init embassy
     embassy::init(&clocks, timer_group0);
 
@@ -117,4 +119,6 @@ async fn main(spawner: Spawner) {
     if let Err(e) = controls::init(cfg.clone(), gpio.pins.gpio21, &spawner) {
         log::error!("Failed to init controls: {:?}", e);
     }
+
+    log::info!("main init: Completed");
 }

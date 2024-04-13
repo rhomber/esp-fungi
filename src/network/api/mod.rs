@@ -13,7 +13,8 @@ use crate::mister::{ChangeModePublisher, CHANGE_MODE_CHANNEL};
 
 mod routes;
 
-pub(crate) const WEB_TASK_POOL_SIZE: usize = 8;
+// Only works with 1 at the moment (probs how the stack is shared).
+pub(crate) const WEB_TASK_POOL_SIZE: usize = 1;
 
 pub(crate) fn init(
     cfg: Config,
@@ -26,7 +27,7 @@ pub(crate) fn init(
             read_request: Some(Duration::from_secs(1)),
             write: Some(Duration::from_secs(1)),
         },
-        connection: KeepAlive::KeepAlive,
+        connection: KeepAlive::Close,
         shutdown_method: ShutdownMethod::Shutdown,
     }));
 

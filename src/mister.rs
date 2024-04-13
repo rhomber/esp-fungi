@@ -1,4 +1,5 @@
 use alloc::format;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::fmt::{Display, Formatter};
 
@@ -24,17 +25,17 @@ use crate::utils::get_time_ms;
 
 const MISTER_POWER_GPIO_PIN: u8 = 17;
 const STATUS_LED_GPIO_PIN: u8 = 22;
-const FLASH_STORAGE_ADDR: u32 = 0x9000;
+const MODE_FLASH_ADDR: u32 = 0x9000;
 
-type ChangeModeSubscriber = Subscriber<'static, CriticalSectionRawMutex, ChangeMode, 1, 2, 1>;
+type ChangeModeSubscriber = Subscriber<'static, CriticalSectionRawMutex, ChangeMode, 1, 2, 2>;
 pub(crate) type ChangeModePublisher =
-    Publisher<'static, CriticalSectionRawMutex, ChangeMode, 1, 2, 1>;
-pub(crate) static CHANGE_MODE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ChangeMode, 1, 2, 1> =
+    Publisher<'static, CriticalSectionRawMutex, ChangeMode, 1, 2, 2>;
+pub(crate) static CHANGE_MODE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ChangeMode, 1, 2, 2> =
     PubSubChannel::new();
 
-type ModeChangedPublisher = Publisher<'static, CriticalSectionRawMutex, Mode, 1, 1, 1>;
-pub(crate) type ModeChangedSubscriber = Subscriber<'static, CriticalSectionRawMutex, Mode, 1, 1, 1>;
-pub(crate) static MODE_CHANGED_CHANNEL: PubSubChannel<CriticalSectionRawMutex, Mode, 1, 1, 1> =
+type ModeChangedPublisher = Publisher<'static, CriticalSectionRawMutex, Mode, 1, 2, 1>;
+pub(crate) type ModeChangedSubscriber = Subscriber<'static, CriticalSectionRawMutex, Mode, 1, 2, 1>;
+pub(crate) static MODE_CHANGED_CHANNEL: PubSubChannel<CriticalSectionRawMutex, Mode, 1, 2, 1> =
     PubSubChannel::new();
 
 pub(crate) static ACTIVE_MODE: RwLock<Option<Mode>> = RwLock::new(None);
@@ -46,6 +47,10 @@ pub(crate) type StatusChangedSubscriber =
 pub(crate) static STATUS_CHANGED_CHANNEL: PubSubChannel<CriticalSectionRawMutex, Status, 1, 2, 1> =
     PubSubChannel::new();
 pub(crate) static STATUS: RwLock<Option<Status>> = RwLock::new(Some(Status::Off));
+
+pub(crate) static ACTIVE_AUTO_RH: RwLock<Option<f32>> = RwLock::new(None);
+
+static AUTO_SCHEDULE_PENDING_SLEEP_MS: u32 = 100;
 
 pub(crate) fn init(
     cfg: Config,
@@ -82,6 +87,15 @@ pub(crate) fn init(
         ))
         .map_err(map_embassy_spawn_err)?;
 
+    spawner
+        .spawn(mister_auto_schedule_task(
+            cfg.clone(),
+            MODE_CHANGED_CHANNEL
+                .subscriber()
+                .map_err(map_embassy_pub_sub_err)?,
+        ))
+        .map_err(map_embassy_spawn_err)?;
+
     Ok(())
 }
 
@@ -99,7 +113,7 @@ async fn mister_operation_task(
 
     let mut mister_pwr_pin = mister_pwr_pin.into_push_pull_output();
 
-    let mut auto_state: Option<AutoState> = None;
+    let mut auto_state: Option<AutoRhState> = None;
 
     loop {
         if let Err(e) = mister_operation_task_poll(
@@ -117,7 +131,7 @@ async fn mister_operation_task(
             log::warn!("mister operation task poll failed: {:?}", e);
 
             // Some sleep to avoid thrashing.
-            Timer::after(Duration::from_millis(50)).await;
+            Timer::after(Duration::from_millis(5000)).await;
             continue;
         }
     }
@@ -131,15 +145,15 @@ async fn mister_operation_task_poll(
     change_mode_sub: &mut ChangeModeSubscriber,
     status_changed_pub: &mut StatusChangedPublisher,
     sensor_sub: &mut SensorSubscriber,
-    auto_state: &mut Option<AutoState>,
+    auto_state: &mut Option<AutoRhState>,
 ) -> Result<()> {
     match select(change_mode_sub.next_message(), sensor_sub.next_message()).await {
         Either::First(r) => match r {
             WaitResult::Lagged(count) => {
-                return Err(general_fault(format!(
-                    "mister mode subscriber lagged by {} messages",
-                    count
-                )));
+                log::warn!("mister mode subscriber lagged by {} messages", count);
+
+                // Ignore
+                return Ok(());
             }
             WaitResult::Message(change_mode) => match change_mode.mode {
                 Some(mode) => {
@@ -156,25 +170,36 @@ async fn mister_operation_task_poll(
             if is_mode_auto() {
                 match r {
                     WaitResult::Lagged(count) => {
-                        change_status(Status::Fault, mister_pwr_pin, status_changed_pub).await?;
+                        log::warn!("sensor subscriber lagged by {} messages", count);
 
-                        // Clear state.
-                        let _ = auto_state.take();
-
-                        return Err(general_fault(format!(
-                            "sensor subscriber lagged by {} messages",
-                            count
-                        )));
+                        // Ignore
+                        return Ok(());
                     }
                     WaitResult::Message(metrics) => {
-                        mister_auto_poll(
-                            cfg,
-                            auto_state,
-                            metrics,
-                            mister_pwr_pin,
-                            status_changed_pub,
-                        )
-                        .await?;
+                        match ACTIVE_AUTO_RH.read().clone() {
+                            Some(target_rh) => {
+                                mister_auto_rh_poll(
+                                    cfg,
+                                    auto_state,
+                                    target_rh,
+                                    metrics,
+                                    mister_pwr_pin,
+                                    status_changed_pub,
+                                )
+                                .await?;
+                            }
+                            None => {
+                                change_status(Status::Fault, mister_pwr_pin, status_changed_pub)
+                                    .await?;
+
+                                // Clear state.
+                                let _ = auto_state.take();
+
+                                return Err(general_fault(
+                                    "mister mode is auto without schedule present".to_string(),
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -184,12 +209,12 @@ async fn mister_operation_task_poll(
     Ok(())
 }
 
-struct AutoState {
+struct AutoRhState {
     status: Status,
     cycle_start_time: u32,
 }
 
-impl AutoState {
+impl AutoRhState {
     fn new(status: Status, cycle_start_time: u32) -> Self {
         Self {
             status,
@@ -198,9 +223,10 @@ impl AutoState {
     }
 }
 
-async fn mister_auto_poll(
+async fn mister_auto_rh_poll(
     cfg: Arc<ConfigInstance>,
-    state: &mut Option<AutoState>,
+    state: &mut Option<AutoRhState>,
+    target_rh: f32,
     metrics: Option<SensorMetrics>,
     mister_pwr_pin: &mut GpioPin<Output<PushPull>, MISTER_POWER_GPIO_PIN>,
     status_changed_pub: &mut StatusChangedPublisher,
@@ -208,8 +234,8 @@ async fn mister_auto_poll(
     match metrics {
         Some(metrics) => {
             let status = STATUS.read().clone();
-            let rh_on = cfg.mister_auto_on_rh();
-            let rh_off = cfg.mister_auto_rh;
+            let rh_on = cfg.mister_auto_on_rh(target_rh);
+            let rh_off = target_rh;
 
             // Verify state is accurate.
             if let Some(cur) = state.as_ref() {
@@ -251,7 +277,7 @@ async fn mister_auto_poll(
                             Ok(())
                         }
                         None => {
-                            let _ = state.insert(AutoState::new(new_status, get_time_ms()));
+                            let _ = state.insert(AutoRhState::new(new_status, get_time_ms()));
                             change_status(new_status, mister_pwr_pin, status_changed_pub).await
                         }
                     }
@@ -275,6 +301,207 @@ async fn mister_auto_poll(
             let _ = state.take();
 
             change_status(Status::Fault, mister_pwr_pin, status_changed_pub).await
+        }
+    }
+}
+
+enum AutoScheduleMode {
+    Initial,
+    Pending,
+    Running,
+}
+
+struct AutoScheduleState {
+    mode: AutoScheduleMode,
+    idx: usize,
+    start_time: u32,
+}
+
+impl AutoScheduleState {
+    fn new(mode: AutoScheduleMode, idx: usize, start_time: u32) -> Self {
+        Self {
+            mode,
+            idx,
+            start_time,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.mode = AutoScheduleMode::Initial;
+        self.idx = 0;
+        self.start_time = 0;
+    }
+
+    fn running_ms(&self) -> u32 {
+        get_time_ms() - self.start_time
+    }
+}
+
+impl Default for AutoScheduleState {
+    fn default() -> Self {
+        Self::new(AutoScheduleMode::Initial, 0, 0)
+    }
+}
+
+#[embassy_executor::task]
+async fn mister_auto_schedule_task(cfg: Config, mut mode_changed_sub: ModeChangedSubscriber) {
+    let mut state = AutoScheduleState::default();
+    loop {
+        match mister_auto_schedule_task_poll(cfg.load(), &mut state, &mut mode_changed_sub).await {
+            Ok(_) => {
+                // Yield.
+                Timer::after(Duration::from_millis(50)).await;
+            }
+            Err(e) => {
+                log::warn!("mister auto schedule task poll failed: {:?}", e);
+
+                // Some sleep to avoid thrashing.
+                Timer::after(Duration::from_millis(500)).await;
+                continue;
+            }
+        }
+    }
+}
+
+async fn mister_auto_schedule_task_poll(
+    cfg: Arc<ConfigInstance>,
+    state: &mut AutoScheduleState,
+    mode_changed_sub: &mut ModeChangedSubscriber,
+) -> Result<()> {
+    // Init
+    if matches!(state.mode, AutoScheduleMode::Initial) {
+        if !is_mode_auto() {
+            return Ok(());
+        }
+
+        // Initialize.
+        mister_auto_schedule_start(cfg.as_ref(), state, 0).await?;
+    } else if !is_mode_auto() {
+        state.reset();
+        return Ok(());
+    }
+
+    // Main
+    let (_, schedule_sleep_secs) = get_auto_schedule(cfg.as_ref(), state)?;
+
+    let sleep_ms = match state.mode {
+        AutoScheduleMode::Pending => AUTO_SCHEDULE_PENDING_SLEEP_MS,
+        AutoScheduleMode::Running => {
+            if state.start_time > 0 {
+                (schedule_sleep_secs * 1000) - state.running_ms()
+            } else {
+                state.reset();
+
+                return Err(general_fault(
+                    "auto schedule 'Waiting' with no start time!".to_string(),
+                ));
+            }
+        }
+        _ => unreachable!(),
+    };
+
+    if sleep_ms <= 0 {
+        log::warn!("CHECK 1");
+
+        return mister_auto_schedule_check(cfg.as_ref(), state).await;
+    }
+
+    match select(
+        mode_changed_sub.next_message(),
+        Timer::after(Duration::from_millis(sleep_ms as u64)),
+    )
+    .await
+    {
+        Either::First(r) => match r {
+            WaitResult::Lagged(count) => {
+                log::warn!("mister mode changed subscriber lagged by {} messages", count);
+
+                // Ignore
+                Ok(())
+            },
+            WaitResult::Message(_) => {
+                log::info!("Mister mode changed, resetting auto scheduler");
+                state.reset();
+
+                Ok(())
+            }
+        },
+        Either::Second(_) => mister_auto_schedule_check(cfg.as_ref(), state).await,
+    }
+}
+
+async fn mister_auto_schedule_start(
+    cfg: &ConfigInstance,
+    state: &mut AutoScheduleState,
+    idx: usize,
+) -> Result<()> {
+    state.idx = idx;
+
+    let (rh, run_secs) = get_auto_schedule(cfg, state)?;
+
+    let _ = ACTIVE_AUTO_RH.write().insert(rh);
+    state.mode = AutoScheduleMode::Pending;
+
+    log::info!("Started mister auto schedule [rh: {}, run_secs: {}]", rh, run_secs);
+
+    Ok(())
+}
+
+async fn mister_auto_schedule_next(
+    cfg: &ConfigInstance,
+    state: &mut AutoScheduleState,
+) -> Result<()> {
+    if cfg.mister_auto_rh_schedule.len() >= state.idx + 2 {
+        mister_auto_schedule_start(cfg, state, state.idx + 1).await
+    } else {
+        mister_auto_schedule_start(cfg, state, 0).await
+    }
+}
+
+async fn mister_auto_schedule_check(
+    cfg: &ConfigInstance,
+    state: &mut AutoScheduleState,
+) -> Result<()> {
+    let (target_rh, run_secs) = get_auto_schedule(cfg, state)?;
+
+    match sensor::METRICS.read().clone() {
+        Some(metrics) => match state.mode {
+            AutoScheduleMode::Pending => {
+                let rh_on = cfg.mister_auto_on_rh(target_rh);
+                let rh_off = target_rh;
+
+                if metrics.rh >= rh_on && metrics.rh <= rh_off {
+                    state.start_time = get_time_ms();
+                    state.mode = AutoScheduleMode::Running;
+                }
+
+                Ok(())
+            }
+            AutoScheduleMode::Running => {
+                if state.running_ms() >= run_secs * 1000 {
+                    mister_auto_schedule_next(cfg, state).await?;
+                }
+
+                Ok(())
+            }
+            _ => unreachable!(),
+        },
+        None => Err(general_fault(
+            "failed to check auto schedule - no sensor metrics".to_string(),
+        )),
+    }
+}
+
+fn get_auto_schedule(cfg: &ConfigInstance, state: &mut AutoScheduleState) -> Result<(f32, u32)> {
+    match cfg.mister_auto_rh_schedule.get(state.idx).cloned() {
+        Some((rh, run_secs)) => Ok((rh, run_secs)),
+        None => {
+            state.reset();
+
+            Err(general_fault(format!(
+                "no mister auto schedule found for idx: {}",
+                state.idx
+            )))
         }
     }
 }
@@ -312,10 +539,10 @@ async fn mister_status_led_task_poll(
     {
         Either::First(r) => match r {
             WaitResult::Lagged(count) => {
-                return Err(general_fault(format!(
-                    "status change subscriber lagged by {} messages",
-                    count
-                )));
+                log::warn!("status change subscriber lagged by {} messages", count);
+
+                // Ignore
+                return Ok(());
             }
             WaitResult::Message(status) => match status {
                 Status::Off => {
@@ -392,6 +619,8 @@ async fn change_status(
         None => true,
         Some(v) => !v.eq(&status),
     } {
+        log::info!("Mister status changed to: {:?}", status);
+
         let _ = STATUS.write().insert(status);
         status_changed_pub.publish_immediate(status);
     }
@@ -422,7 +651,7 @@ async fn toggle_mode(
 
 async fn load_mode(storage: &mut FlashStorage, mode_changed_pub: &mut ModeChangedPublisher) {
     let mut bytes = [0u8; 1];
-    let mode = match storage.read(FLASH_STORAGE_ADDR, &mut bytes) {
+    let mode = match storage.read(MODE_FLASH_ADDR, &mut bytes) {
         Ok(_) => {
             let mode_u8 = u8::from_be_bytes(bytes);
             if mode_u8 >= Mode::min() && mode_u8 <= Mode::max() {
@@ -447,7 +676,7 @@ async fn store_mode(
 ) -> Result<()> {
     let mode_u8 = mode as u8;
     storage
-        .write(FLASH_STORAGE_ADDR, mode_u8.to_be_bytes().as_ref())
+        .write(MODE_FLASH_ADDR, mode_u8.to_be_bytes().as_ref())
         .map_err(|e| {
             general_fault(format!(
                 "Failed to persist active mode to flash storage: {:?}",

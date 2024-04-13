@@ -1,5 +1,7 @@
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use spin::RwLock;
 
@@ -55,7 +57,7 @@ pub(crate) struct ConfigInstance {
     pub(crate) sensor_calibration_rh_adj: Option<f32>,
     pub(crate) controls_min_press_ms: u32,
     pub(crate) controls_min_hold_ms: u32,
-    pub(crate) mister_auto_rh: f32,
+    pub(crate) mister_auto_rh_schedule: Vec<(f32, u32)>,
     pub(crate) mister_auto_on_rh_adj: Option<f32>,
     pub(crate) mister_auto_duration_min_ms: u32,
 }
@@ -70,10 +72,10 @@ impl ConfigInstance {
         }
     }
 
-    pub(crate) fn mister_auto_on_rh(&self) -> f32 {
+    pub(crate) fn mister_auto_on_rh(&self, rh: f32) -> f32 {
         match self.mister_auto_on_rh_adj {
-            Some(adj) => self.mister_auto_rh + adj,
-            None => self.mister_auto_rh,
+            Some(adj) => rh + adj,
+            None => rh,
         }
     }
 }
@@ -92,7 +94,13 @@ impl Default for ConfigInstance {
             sensor_calibration_rh_adj: Some(5.00),
             controls_min_press_ms: 100,
             controls_min_hold_ms: 500,
-            mister_auto_rh: 90_f32,
+            mister_auto_rh_schedule: vec![
+                (85_f32, 60 * 5),
+                (88_f32, 60 * 2),
+                (92_f32, 30),
+                (80_f32, 60 * 5),
+                (85_f32, 60 * 5),
+            ],
             mister_auto_on_rh_adj: Some(-1_f32),
             mister_auto_duration_min_ms: 10000,
         }
