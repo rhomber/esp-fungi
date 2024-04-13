@@ -1,27 +1,15 @@
-use alloc::sync::Arc;
-
-use picoserve::routing::{get, NoPathParameters, PathRouter};
+use picoserve::routing::{get, PathRouter};
 use picoserve::Router;
 
-use crate::config::Config;
 use crate::error::Result;
-use crate::mister::ChangeModePublisher;
+use crate::network::api::ApiState;
 
-mod mode;
-mod status;
+pub(crate) mod mode;
+pub(crate) mod status;
 
-pub(crate) fn init(
-    _cfg: Config,
-    _change_mode_pub: Arc<ChangeModePublisher>,
-) -> Result<Router<impl PathRouter<(), NoPathParameters>>> {
+pub(crate) fn init() -> Result<Router<impl PathRouter<ApiState> + Sized, ApiState>> {
     Ok(Router::new()
         .route("/", get(status::handle_get))
         .route("/status", get(status::handle_get))
         .route("/mode", get(mode::handle_get)))
-    //.route(
-    //    "/mode",
-    //    post(move || {
-    //        mode::handle_change(change_mode_pub.clone())
-    //    }),
-    //))
 }

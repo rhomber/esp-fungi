@@ -12,6 +12,7 @@ use embedded_hal::digital::{OutputPin, StatefulOutputPin};
 use embedded_storage::{ReadStorage, Storage};
 use esp_hal::gpio::{GpioPin, Output, PushPull, Unknown};
 use esp_storage::FlashStorage;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use spin::RwLock;
 
@@ -48,7 +49,8 @@ pub(crate) static STATUS_CHANGED_CHANNEL: PubSubChannel<CriticalSectionRawMutex,
     PubSubChannel::new();
 pub(crate) static STATUS: RwLock<Option<Status>> = RwLock::new(Some(Status::Off));
 
-pub(crate) static ACTIVE_AUTO_RH: RwLock<Option<f32>> = RwLock::new(None);
+pub(crate) static ACTIVE_AUTO: Lazy<RwLock<AutoScheduleState>> =
+    Lazy::new(|| RwLock::new(AutoScheduleState::default()));
 
 static AUTO_SCHEDULE_PENDING_SLEEP_MS: u32 = 100;
 
@@ -176,8 +178,8 @@ async fn mister_operation_task_poll(
                         return Ok(());
                     }
                     WaitResult::Message(metrics) => {
-                        match ACTIVE_AUTO_RH.read().clone() {
-                            Some(target_rh) => {
+                        match ACTIVE_AUTO.read().get_auto_schedule(cfg.as_ref()) {
+                            Some((target_rh, _)) => {
                                 mister_auto_rh_poll(
                                     cfg,
                                     auto_state,
@@ -196,7 +198,8 @@ async fn mister_operation_task_poll(
                                 let _ = auto_state.take();
 
                                 return Err(general_fault(
-                                    "mister mode is auto without schedule present".to_string(),
+                                    "mister mode is auto without valid schedule present"
+                                        .to_string(),
                                 ));
                             }
                         }
@@ -305,16 +308,18 @@ async fn mister_auto_rh_poll(
     }
 }
 
-enum AutoScheduleMode {
+#[derive(Clone, Serialize)]
+pub(crate) enum AutoScheduleMode {
     Initial,
     Pending,
     Running,
 }
 
-struct AutoScheduleState {
-    mode: AutoScheduleMode,
-    idx: usize,
-    start_time: u32,
+#[derive(Clone)]
+pub(crate) struct AutoScheduleState {
+    pub(crate) mode: AutoScheduleMode,
+    pub(crate) idx: usize,
+    pub(crate) start_time: u32,
 }
 
 impl AutoScheduleState {
@@ -332,8 +337,18 @@ impl AutoScheduleState {
         self.start_time = 0;
     }
 
-    fn running_ms(&self) -> u32 {
+    pub(crate) fn running_ms(&self) -> u32 {
         get_time_ms() - self.start_time
+    }
+
+    pub(crate) fn remaining_ms(&self, cfg: &ConfigInstance) -> Option<u32> {
+        match self.get_auto_schedule(cfg) {
+            Some((_rh, run_secs)) => Some((run_secs * 1000) - self.running_ms()),
+            None => None,
+        }
+    }
+    pub(crate) fn get_auto_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)> {
+        cfg.mister_auto_rh_schedule.get(self.idx).cloned()
     }
 }
 
@@ -345,9 +360,8 @@ impl Default for AutoScheduleState {
 
 #[embassy_executor::task]
 async fn mister_auto_schedule_task(cfg: Config, mut mode_changed_sub: ModeChangedSubscriber) {
-    let mut state = AutoScheduleState::default();
     loop {
-        match mister_auto_schedule_task_poll(cfg.load(), &mut state, &mut mode_changed_sub).await {
+        match mister_auto_schedule_task_poll(cfg.load(), &mut mode_changed_sub).await {
             Ok(_) => {
                 // Yield.
                 Timer::after(Duration::from_millis(50)).await;
@@ -365,32 +379,31 @@ async fn mister_auto_schedule_task(cfg: Config, mut mode_changed_sub: ModeChange
 
 async fn mister_auto_schedule_task_poll(
     cfg: Arc<ConfigInstance>,
-    state: &mut AutoScheduleState,
     mode_changed_sub: &mut ModeChangedSubscriber,
 ) -> Result<()> {
     // Init
-    if matches!(state.mode, AutoScheduleMode::Initial) {
+    if matches!(ACTIVE_AUTO.read().mode, AutoScheduleMode::Initial) {
         if !is_mode_auto() {
             return Ok(());
         }
 
         // Initialize.
-        mister_auto_schedule_start(cfg.as_ref(), state, 0).await?;
+        mister_auto_schedule_start(cfg.as_ref(), 0).await?;
     } else if !is_mode_auto() {
-        state.reset();
+        ACTIVE_AUTO.write().reset();
         return Ok(());
     }
 
     // Main
-    let (_, schedule_sleep_secs) = get_auto_schedule(cfg.as_ref(), state)?;
+    let (_, schedule_sleep_secs) = get_auto_schedule(cfg.as_ref())?;
 
-    let sleep_ms = match state.mode {
+    let sleep_ms = match ACTIVE_AUTO.read().mode {
         AutoScheduleMode::Pending => AUTO_SCHEDULE_PENDING_SLEEP_MS,
         AutoScheduleMode::Running => {
-            if state.start_time > 0 {
-                (schedule_sleep_secs * 1000) - state.running_ms()
+            if ACTIVE_AUTO.read().start_time > 0 {
+                (schedule_sleep_secs * 1000) - ACTIVE_AUTO.read().running_ms()
             } else {
-                state.reset();
+                ACTIVE_AUTO.write().reset();
 
                 return Err(general_fault(
                     "auto schedule 'Waiting' with no start time!".to_string(),
@@ -403,7 +416,7 @@ async fn mister_auto_schedule_task_poll(
     if sleep_ms <= 0 {
         log::warn!("CHECK 1");
 
-        return mister_auto_schedule_check(cfg.as_ref(), state).await;
+        return mister_auto_schedule_check(cfg.as_ref()).await;
     }
 
     match select(
@@ -414,72 +427,77 @@ async fn mister_auto_schedule_task_poll(
     {
         Either::First(r) => match r {
             WaitResult::Lagged(count) => {
-                log::warn!("mister mode changed subscriber lagged by {} messages", count);
+                log::warn!(
+                    "mister mode changed subscriber lagged by {} messages",
+                    count
+                );
 
                 // Ignore
                 Ok(())
-            },
+            }
             WaitResult::Message(_) => {
                 log::info!("Mister mode changed, resetting auto scheduler");
-                state.reset();
+                ACTIVE_AUTO.write().reset();
 
                 Ok(())
             }
         },
-        Either::Second(_) => mister_auto_schedule_check(cfg.as_ref(), state).await,
+        Either::Second(_) => mister_auto_schedule_check(cfg.as_ref()).await,
     }
 }
 
-async fn mister_auto_schedule_start(
-    cfg: &ConfigInstance,
-    state: &mut AutoScheduleState,
-    idx: usize,
-) -> Result<()> {
-    state.idx = idx;
+async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<()> {
+    let (rh, run_secs) = get_auto_schedule(cfg)?;
 
-    let (rh, run_secs) = get_auto_schedule(cfg, state)?;
+    match ACTIVE_AUTO.write() {
+        mut wr => {
+            wr.reset();
+            wr.idx = idx;
+            wr.mode = AutoScheduleMode::Pending;
+        }
+    }
 
-    let _ = ACTIVE_AUTO_RH.write().insert(rh);
-    state.mode = AutoScheduleMode::Pending;
-
-    log::info!("Started mister auto schedule [rh: {}, run_secs: {}]", rh, run_secs);
+    log::info!(
+        "Started mister auto schedule [rh: {}, run_secs: {}]",
+        rh,
+        run_secs
+    );
 
     Ok(())
 }
 
-async fn mister_auto_schedule_next(
-    cfg: &ConfigInstance,
-    state: &mut AutoScheduleState,
-) -> Result<()> {
-    if cfg.mister_auto_rh_schedule.len() >= state.idx + 2 {
-        mister_auto_schedule_start(cfg, state, state.idx + 1).await
+async fn mister_auto_schedule_next(cfg: &ConfigInstance) -> Result<()> {
+    let cur_idx = ACTIVE_AUTO.read().idx;
+    if cfg.mister_auto_rh_schedule.len() >= cur_idx + 2 {
+        mister_auto_schedule_start(cfg, cur_idx + 1).await
     } else {
-        mister_auto_schedule_start(cfg, state, 0).await
+        mister_auto_schedule_start(cfg, 0).await
     }
 }
 
-async fn mister_auto_schedule_check(
-    cfg: &ConfigInstance,
-    state: &mut AutoScheduleState,
-) -> Result<()> {
-    let (target_rh, run_secs) = get_auto_schedule(cfg, state)?;
+async fn mister_auto_schedule_check(cfg: &ConfigInstance) -> Result<()> {
+    let (target_rh, run_secs) = get_auto_schedule(cfg)?;
 
     match sensor::METRICS.read().clone() {
-        Some(metrics) => match state.mode {
+        Some(metrics) => match ACTIVE_AUTO.read().mode {
             AutoScheduleMode::Pending => {
                 let rh_on = cfg.mister_auto_on_rh(target_rh);
                 let rh_off = target_rh;
 
                 if metrics.rh >= rh_on && metrics.rh <= rh_off {
-                    state.start_time = get_time_ms();
-                    state.mode = AutoScheduleMode::Running;
+                    match ACTIVE_AUTO.write() {
+                        mut wr => {
+                            wr.start_time = get_time_ms();
+                            wr.mode = AutoScheduleMode::Running;
+                        }
+                    }
                 }
 
                 Ok(())
             }
             AutoScheduleMode::Running => {
-                if state.running_ms() >= run_secs * 1000 {
-                    mister_auto_schedule_next(cfg, state).await?;
+                if ACTIVE_AUTO.read().running_ms() >= run_secs * 1000 {
+                    mister_auto_schedule_next(cfg).await?;
                 }
 
                 Ok(())
@@ -492,15 +510,15 @@ async fn mister_auto_schedule_check(
     }
 }
 
-fn get_auto_schedule(cfg: &ConfigInstance, state: &mut AutoScheduleState) -> Result<(f32, u32)> {
-    match cfg.mister_auto_rh_schedule.get(state.idx).cloned() {
+fn get_auto_schedule(cfg: &ConfigInstance) -> Result<(f32, u32)> {
+    match ACTIVE_AUTO.read().get_auto_schedule(cfg) {
         Some((rh, run_secs)) => Ok((rh, run_secs)),
         None => {
-            state.reset();
+            ACTIVE_AUTO.write().reset();
 
             Err(general_fault(format!(
                 "no mister auto schedule found for idx: {}",
-                state.idx
+                ACTIVE_AUTO.read().idx
             )))
         }
     }

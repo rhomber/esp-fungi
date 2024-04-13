@@ -16,6 +16,21 @@ mod routes;
 // Only works with 1 at the moment (probs how the stack is shared).
 pub(crate) const WEB_TASK_POOL_SIZE: usize = 1;
 
+#[derive(Clone)]
+struct ApiState {
+    cfg: Config,
+    change_mode_pub: Arc<ChangeModePublisher>,
+}
+
+impl ApiState {
+    fn new(cfg: Config, change_mode_pub: Arc<ChangeModePublisher>) -> Self {
+        Self {
+            cfg,
+            change_mode_pub,
+        }
+    }
+}
+
 pub(crate) fn init(
     cfg: Config,
     stack: &'static Stack<WifiDevice<'static, WifiStaDevice>>,
@@ -37,15 +52,11 @@ pub(crate) fn init(
             .map_err(map_embassy_pub_sub_err)?,
     );
 
+    let api_state = ApiState::new(cfg.clone(), change_mode_pub);
+
     for id in 0..WEB_TASK_POOL_SIZE {
         spawner
-            .spawn(web_task(
-                id,
-                cfg.clone(),
-                stack,
-                pico_cfg,
-                change_mode_pub.clone(),
-            ))
+            .spawn(web_task(id, stack, pico_cfg, api_state.clone()))
             .map_err(map_embassy_spawn_err)?;
     }
 
@@ -55,12 +66,11 @@ pub(crate) fn init(
 #[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
 pub async fn web_task(
     id: usize,
-    cfg: Config,
     stack: &'static Stack<WifiDevice<'static, WifiStaDevice>>,
     pico_cfg: &'static picoserve::Config<Duration>,
-    change_mode_pub: Arc<ChangeModePublisher>,
+    api_state: ApiState,
 ) {
-    let app = routes::init(cfg, change_mode_pub).expect("Failed to init routes");
+    let app = routes::init().expect("failed to init API routes");
 
     let port = 80;
     let mut tcp_rx_buffer = [0; 1024];
@@ -73,7 +83,7 @@ pub async fn web_task(
 
     log::info!("API worker[{}]: Listening", id);
 
-    picoserve::listen_and_serve(
+    picoserve::listen_and_serve_with_state(
         id,
         &app,
         pico_cfg,
@@ -82,6 +92,7 @@ pub async fn web_task(
         &mut tcp_rx_buffer,
         &mut tcp_tx_buffer,
         &mut http_buffer,
+        &api_state,
     )
     .await
 }

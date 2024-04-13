@@ -1,24 +1,21 @@
-use alloc::sync::Arc;
-
-use picoserve::response::Json;
+use picoserve::response::{IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
-use crate::mister::{ChangeModePublisher, Mode as MisterMode, ACTIVE_MODE};
+use crate::mister::{Mode as MisterMode, ACTIVE_MODE};
 
-pub(crate) async fn handle_get() -> Json<GetModeResponse> {
+pub(crate) async fn handle_get() -> impl IntoResponse {
     Json(GetModeResponse {
         mode: ACTIVE_MODE.read().clone(),
     })
 }
 
-pub(crate) async fn handle_change(
-    _change_mode_pub: Arc<ChangeModePublisher>,
-) -> Result<Json<GetModeResponse>> {
+/*
+pub(crate) async fn handle_change() -> impl IntoResponse {
     // TODO:
 
     Ok(handle_get().await)
 }
+ */
 
 #[derive(Serialize)]
 pub(crate) struct GetModeResponse {

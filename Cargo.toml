@@ -34,6 +34,7 @@ sht40 = ["sensor-temp-humidity-sht40"]
 log = { version = "0.4.20" }
 static_cell = { version = "=1.2.0", features = ["nightly"] }
 spin = { version = "0.9.8", features = ["rwlock"] }
+once_cell = { version = "1.19.0", default-features = false, features = ["alloc", "critical-section"] }
 
 esp-hal = { version = "0.16.0", features = [ "esp32", "async", "rt", "vectored", "embassy", "embassy-time-timg0", "embassy-executor-thread", "embassy-integrated-timers"] }
 esp-backtrace = { version = "0.11.0", features = [

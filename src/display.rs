@@ -25,8 +25,7 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use crate::error::{
-    display_draw_err, map_display_err, map_embassy_pub_sub_err,
-    map_embassy_spawn_err, Result,
+    display_draw_err, map_display_err, map_embassy_pub_sub_err, map_embassy_spawn_err, Result,
 };
 use crate::mister::{
     Mode as MisterMode, ModeChangedSubscriber as MisterModeChangedSubscriber,
@@ -58,7 +57,7 @@ pub(crate) static CHANGE_MODE_CHANNEL: PubSubChannel<CriticalSectionRawMutex, Ch
     PubSubChannel::new();
 
 pub(crate) fn init<SDA, SCL>(
-    _cfg: Config,
+    cfg: Config,
     sda: impl Peripheral<P = SDA> + 'static,
     scl: impl Peripheral<P = SCL> + 'static,
     i2c1: I2C1,
@@ -104,7 +103,7 @@ where
 
     display.flush().map_err(map_display_err)?;
 
-    let mut display_renderer = DisplayRenderer::new(display, 0_f32, 0_f32);
+    let mut display_renderer = DisplayRenderer::new(cfg.clone(), display, 0_f32, 0_f32);
 
     // Initial draw
     display_renderer.draw()?;
@@ -232,6 +231,7 @@ async fn display_task_poll(
 }
 
 struct DisplayRenderer<'d> {
+    cfg: Config,
     display: Ssd1306<
         I2CInterface<I2C<'d, I2C1>>,
         DisplaySize128x64,
@@ -250,6 +250,7 @@ struct DisplayRenderer<'d> {
 
 impl<'d> DisplayRenderer<'d> {
     fn new(
+        cfg: Config,
         display: Ssd1306<
             I2CInterface<I2C<'d, I2C1>>,
             DisplaySize128x64,
@@ -268,6 +269,7 @@ impl<'d> DisplayRenderer<'d> {
         let status_text_style = MonoTextStyle::new(&FONT_8X13, BinaryColor::On);
 
         Self {
+            cfg,
             display,
             bg_style,
             text_style,
@@ -361,8 +363,12 @@ impl<'d> DisplayRenderer<'d> {
         match self.mode {
             Mode::MisterMode => match self.mister_mode {
                 Some(MisterMode::Auto) => {
-                    let text = match mister::ACTIVE_AUTO_RH.read().clone() {
-                        Some(rh) => format!("AUTO {}%", rh.ceil() as u32),
+                    let text = match mister::ACTIVE_AUTO
+                        .read()
+                        .get_auto_schedule(self.cfg.load().as_ref())
+                        .clone()
+                    {
+                        Some((rh, _)) => format!("AUTO {}%", rh.ceil() as u32),
                         None => "AUTO ??%".to_string(),
                     };
 
