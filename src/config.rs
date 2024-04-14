@@ -59,6 +59,7 @@ pub(crate) struct ConfigInstance {
     pub(crate) controls_min_hold_ms: u32,
     pub(crate) mister_auto_rh_schedule: Vec<(f32, u32)>,
     pub(crate) mister_auto_on_rh_adj: Option<f32>,
+    pub(crate) mister_auto_off_rh_adj: Option<f32>,
     pub(crate) mister_auto_duration_min_ms: u32,
 }
 
@@ -74,6 +75,13 @@ impl ConfigInstance {
 
     pub(crate) fn mister_auto_on_rh(&self, rh: f32) -> f32 {
         match self.mister_auto_on_rh_adj {
+            Some(adj) => rh + adj,
+            None => rh,
+        }
+    }
+
+    pub(crate) fn mister_auto_off_rh(&self, rh: f32) -> f32 {
+        match self.mister_auto_off_rh_adj {
             Some(adj) => rh + adj,
             None => rh,
         }
@@ -101,6 +109,7 @@ impl Default for ConfigInstance {
                 (80_f32, 60 * 7),
             ],
             mister_auto_on_rh_adj: Some(-1_f32),
+            mister_auto_off_rh_adj: None,
             mister_auto_duration_min_ms: 10000,
         }
     }

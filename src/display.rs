@@ -364,10 +364,11 @@ impl<'d> DisplayRenderer<'d> {
         match self.mode {
             Mode::MisterMode => match self.mister_mode {
                 Some(MisterMode::Auto) => {
-                    let text = match mister::ACTIVE_AUTO.get_schedule(self.cfg.load().as_ref()) {
-                        Some((rh, _)) => format!("AUTO {}%", rh.ceil() as u32),
-                        None => "AUTO ??%".to_string(),
-                    };
+                    let text =
+                        match mister::ACTIVE_AUTO_SCHEDULE.get_schedule(self.cfg.load().as_ref()) {
+                            Some((rh, _)) => format!("AUTO {}%", rh.ceil() as u32),
+                            None => "AUTO ??%".to_string(),
+                        };
 
                     self.draw_general_status(text)?;
                     self.draw_mister_status(self.mister_status)?;
