@@ -515,8 +515,6 @@ async fn mister_auto_schedule_task_poll(
 }
 
 async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<()> {
-    let sched = get_auto_schedule_checked(cfg)?;
-
     ACTIVE_AUTO_SCHEDULE.update(|s| {
         s.reset();
         s.idx = idx;
@@ -524,6 +522,7 @@ async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<
         s.start_time = get_time_ms();
     });
 
+    let sched = get_auto_schedule_checked(cfg)?;
     log::info!("Started mister auto schedule '{}' [{:?}]", idx, sched);
 
     Ok(())
