@@ -117,7 +117,7 @@ impl Default for ConfigInstance {
                 schedule![88.00, 60 * 3, Some(60)],
                 schedule![90.00, 60 * 3, Some(30)],
                 schedule![92.00, 60 * 3, Some(30)],
-                schedule![85.00, 60 * 2, Some(90)],
+                schedule![85.00, 60 * 2, Some(60)],
                 schedule![80.00, 60 * 5, Some(60)],
             ],
             mister_auto_on_rh_adj: Some(-1_f32),
