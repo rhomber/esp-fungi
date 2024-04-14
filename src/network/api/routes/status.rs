@@ -1,4 +1,5 @@
 use core::ops::Deref;
+
 use picoserve::extract::State;
 use picoserve::response::{IntoResponse, Json};
 use serde::Serialize;
@@ -59,23 +60,23 @@ impl ActiveAutoSchedule {
                 total_ms: None,
             }),
             AutoScheduleMode::Pending => {
-                let (rh, _) = state.get_auto_schedule(cfg)?;
+                let sched = state.get_auto_schedule(cfg)?;
 
                 Some(Self {
                     mode: state.mode.clone(),
                     idx: Some(state.idx),
-                    rh: Some(rh),
+                    rh: Some(sched.rh),
                     remaining_ms: None,
                     total_ms: Some(state.total_ms()),
                 })
             }
             AutoScheduleMode::Running => {
-                let (rh, _) = state.get_auto_schedule(cfg)?;
+                let sched = state.get_auto_schedule(cfg)?;
 
                 Some(Self {
                     mode: state.mode.clone(),
                     idx: Some(state.idx),
-                    rh: Some(rh),
+                    rh: Some(sched.rh),
                     remaining_ms: Some(state.remaining_ms(cfg)?),
                     total_ms: Some(state.total_ms()),
                 })

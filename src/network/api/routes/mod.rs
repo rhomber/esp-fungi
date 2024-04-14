@@ -1,4 +1,4 @@
-use picoserve::routing::{get, PathRouter};
+use picoserve::routing::{get, post, PathRouter};
 use picoserve::Router;
 
 use crate::error::Result;
@@ -11,5 +11,6 @@ pub(crate) fn init() -> Result<Router<impl PathRouter<ApiState> + Sized, ApiStat
     Ok(Router::new()
         .route("/", get(status::handle_get))
         .route("/status", get(status::handle_get))
-        .route("/mode", get(mode::handle_get)))
+        .route("/mode", get(mode::handle_get))
+        .route("/mode", post(mode::handle_change)))
 }

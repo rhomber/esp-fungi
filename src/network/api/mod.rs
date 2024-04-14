@@ -12,6 +12,8 @@ use crate::error::{map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
 use crate::mister::{ChangeModePublisher, CHANGE_MODE_CHANNEL};
 
 mod routes;
+pub(crate) mod types;
+pub(crate) mod utils;
 
 // Only works with 1 at the moment (probs how the stack is shared).
 pub(crate) const WEB_TASK_POOL_SIZE: usize = 1;

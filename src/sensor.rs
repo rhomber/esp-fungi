@@ -49,7 +49,7 @@ where
 {
     let delay = Delay::new(&clocks);
 
-    let i2c = I2C::new(i2c0, sda, scl, 60.Hz(), &clocks);
+    let i2c = I2C::new(i2c0, sda, scl, 1.kHz(), &clocks);
 
     let dev = Device::new(i2c, delay)
         .map_err(|e| general_fault(format!("failed to create sensor device: {:?}", e)))?;
@@ -94,9 +94,9 @@ async fn emitter_poll(
                         rh = MAX_RH;
                     }
 
-                    log::info!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
+                    log::debug!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
                 } else {
-                    log::info!("Sensor - Temp: {}, RH: {}%", temp, rh);
+                    log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
                 }
 
                 Some(SensorMetrics { temp, rh })

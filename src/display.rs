@@ -1,14 +1,12 @@
 use alloc::format;
 use alloc::string::{String, ToString};
+
 use embassy_executor::Spawner;
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber, WaitResult};
 use embassy_time::{Duration, Timer};
 use embedded_graphics::mono_font::iso_8859_1::{FONT_10X20, FONT_6X12, FONT_8X13};
-use num_traits::float::Float;
-
-use crate::config::Config;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -20,10 +18,12 @@ use esp_hal::i2c::I2C;
 use esp_hal::peripheral::Peripheral;
 use esp_hal::peripherals::I2C1;
 use fugit::RateExtU32;
+use num_traits::float::Float;
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
+use crate::config::Config;
 use crate::error::{
     display_draw_err, map_display_err, map_embassy_pub_sub_err, map_embassy_spawn_err, Result,
 };
@@ -366,7 +366,7 @@ impl<'d> DisplayRenderer<'d> {
                 Some(MisterMode::Auto) => {
                     let text =
                         match mister::ACTIVE_AUTO_SCHEDULE.get_schedule(self.cfg.load().as_ref()) {
-                            Some((rh, _)) => format!("AUTO {}%", rh.ceil() as u32),
+                            Some(sched) => format!("AUTO {}%", sched.rh.ceil() as u32),
                             None => "AUTO ??%".to_string(),
                         };
 

@@ -17,7 +17,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use spin::RwLock;
 
-use crate::config::{Config, ConfigInstance};
+use crate::config::{Config, ConfigInstance, MisterAutoSchedule};
 use crate::error::{
     general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, map_infallible_err, Result,
 };
@@ -184,11 +184,11 @@ async fn mister_operation_task_poll(
                     }
                     WaitResult::Message(metrics) => {
                         match ACTIVE_AUTO_SCHEDULE.get_schedule(cfg.as_ref()) {
-                            Some((target_rh, _)) => {
+                            Some(sched) => {
                                 mister_auto_rh_poll(
-                                    cfg,
+                                    cfg.clone(),
                                     auto_state,
-                                    target_rh,
+                                    sched.rh.clone(),
                                     metrics,
                                     mister_pwr_pin,
                                     status_changed_pub,
@@ -357,12 +357,15 @@ impl AutoScheduleState {
 
     pub(crate) fn remaining_ms(&self, cfg: &ConfigInstance) -> Option<u32> {
         match self.get_auto_schedule(cfg) {
-            Some((_rh, run_secs)) => Some((run_secs * 1000) - self.running_ms()),
+            Some(sched) => Some((sched.run_secs * 1000) - self.running_ms()),
             None => None,
         }
     }
-    pub(crate) fn get_auto_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)> {
-        cfg.mister_auto_schedule.get(self.idx).cloned()
+    pub(crate) fn get_auto_schedule<'a>(
+        &self,
+        cfg: &'a ConfigInstance,
+    ) -> Option<&'a MisterAutoSchedule> {
+        cfg.mister_auto_schedule.get(self.idx)
     }
 }
 
@@ -387,7 +390,7 @@ pub(crate) trait AutoScheduleStateOperator {
 
     fn update(&self, cb: impl FnOnce(&mut AutoScheduleState));
 
-    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)>;
+    fn get_schedule<'a>(&self, cfg: &'a ConfigInstance) -> Option<&'a MisterAutoSchedule>;
 }
 
 impl AutoScheduleStateOperator for ActiveAutoScheduleState {
@@ -420,8 +423,8 @@ impl AutoScheduleStateOperator for ActiveAutoScheduleState {
         cb(wr.deref_mut());
     }
 
-    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)> {
-        self.read().get_auto_schedule(cfg).clone()
+    fn get_schedule<'a>(&self, cfg: &'a ConfigInstance) -> Option<&'a MisterAutoSchedule> {
+        self.read().get_auto_schedule(cfg)
     }
 }
 
@@ -462,13 +465,13 @@ async fn mister_auto_schedule_task_poll(
     }
 
     // Main
-    let (_, schedule_sleep_secs) = get_auto_schedule_checked(cfg.as_ref())?;
+    let sched = get_auto_schedule_checked(cfg.as_ref())?;
 
     let sleep_ms = match ACTIVE_AUTO_SCHEDULE.mode() {
         AutoScheduleMode::Pending => AUTO_SCHEDULE_PENDING_SLEEP_MS,
         AutoScheduleMode::Running => {
             if ACTIVE_AUTO_SCHEDULE.run_start_time() > 0 {
-                (schedule_sleep_secs * 1000) - ACTIVE_AUTO_SCHEDULE.running_ms()
+                (sched.run_secs * 1000) - ACTIVE_AUTO_SCHEDULE.running_ms()
             } else {
                 ACTIVE_AUTO_SCHEDULE.update(|s| s.reset());
 
@@ -512,7 +515,7 @@ async fn mister_auto_schedule_task_poll(
 }
 
 async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<()> {
-    let (rh, run_secs) = get_auto_schedule_checked(cfg)?;
+    let sched = get_auto_schedule_checked(cfg)?;
 
     ACTIVE_AUTO_SCHEDULE.update(|s| {
         s.reset();
@@ -521,11 +524,7 @@ async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<
         s.start_time = get_time_ms();
     });
 
-    log::info!(
-        "Started mister auto schedule [rh: {}, run_secs: {}]",
-        rh,
-        run_secs
-    );
+    log::info!("Started mister auto schedule '{}' [{:?}]", idx, sched);
 
     Ok(())
 }
@@ -540,22 +539,22 @@ async fn mister_auto_schedule_next(cfg: &ConfigInstance) -> Result<()> {
 }
 
 async fn mister_auto_schedule_check(cfg: &ConfigInstance) -> Result<()> {
-    let (target_rh, run_secs) = get_auto_schedule_checked(cfg)?;
+    let sched = get_auto_schedule_checked(cfg)?;
 
     match sensor::METRICS.read().clone() {
         Some(metrics) => {
             match ACTIVE_AUTO_SCHEDULE.mode() {
                 AutoScheduleMode::Pending => {
-                    let rh_on = cfg.mister_auto_on_rh(target_rh);
-                    let rh_off = cfg.mister_auto_off_rh(target_rh);
+                    let rh_on = cfg.mister_auto_on_rh(sched.rh);
+                    let rh_off = cfg.mister_auto_off_rh(sched.rh);
 
                     let should_run = if metrics.rh >= rh_on && metrics.rh <= rh_off {
                         log::info!("Mister auto schedule ('{}') now 'Running' [rh '{}' >= '{}' && <= '{}']",
                             ACTIVE_AUTO_SCHEDULE.idx(), metrics.rh, rh_on, rh_off);
 
                         true
-                    } else if let Some(max_wait_ms) = cfg.mister_auto_schedule_max_wait_ms {
-                        if ACTIVE_AUTO_SCHEDULE.total_ms() >= max_wait_ms {
+                    } else if let Some(max_wait_secs) = sched.max_wait_secs {
+                        if ACTIVE_AUTO_SCHEDULE.total_ms() >= max_wait_secs * 1000 {
                             log::warn!("Mister auto schedule ('{}') now 'Running' [time-out waiting for rh '{}' >= '{}' && <= '{}']",
                                 ACTIVE_AUTO_SCHEDULE.idx(), metrics.rh, rh_on, rh_off);
 
@@ -577,7 +576,7 @@ async fn mister_auto_schedule_check(cfg: &ConfigInstance) -> Result<()> {
                     Ok(())
                 }
                 AutoScheduleMode::Running => {
-                    if ACTIVE_AUTO_SCHEDULE.running_ms() >= run_secs * 1000 {
+                    if ACTIVE_AUTO_SCHEDULE.running_ms() >= sched.run_secs * 1000 {
                         mister_auto_schedule_next(cfg).await?;
                     }
 
@@ -592,9 +591,9 @@ async fn mister_auto_schedule_check(cfg: &ConfigInstance) -> Result<()> {
     }
 }
 
-fn get_auto_schedule_checked(cfg: &ConfigInstance) -> Result<(f32, u32)> {
+fn get_auto_schedule_checked(cfg: &ConfigInstance) -> Result<&MisterAutoSchedule> {
     match ACTIVE_AUTO_SCHEDULE.get_schedule(cfg) {
-        Some((rh, run_secs)) => Ok((rh, run_secs)),
+        Some(sched) => Ok(sched),
         None => {
             ACTIVE_AUTO_SCHEDULE.update(|s| s.reset());
 

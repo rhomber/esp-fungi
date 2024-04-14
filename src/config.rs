@@ -3,9 +3,16 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use serde::{Deserialize, Serialize};
 use spin::RwLock;
 
 use crate::error::Result;
+
+macro_rules! schedule {
+    ($rh:expr, $run_secs:expr, $max_wait_secs:expr) => {
+        MisterAutoSchedule::new($rh, $run_secs, $max_wait_secs)
+    };
+}
 
 #[derive(Clone)]
 pub(crate) struct Config {
@@ -13,11 +20,6 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    #[allow(dead_code)]
-    pub(crate) fn new(sensor_delay_ms: u32, sensor_delay_err_ms: u32) -> Self {
-        Self::new_with_instance(ConfigInstance::new(sensor_delay_ms, sensor_delay_err_ms))
-    }
-
     fn new_with_instance(inst: ConfigInstance) -> Self {
         Self {
             instance: Arc::new(RwLock::new(Some(Arc::new(inst)))),
@@ -38,6 +40,13 @@ impl Config {
 
         Ok(())
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn apply(&self, updates: MutableConfigInstance) -> Result<()> {
+        let mut new = ConfigInstance::default();
+        updates.populate(&mut new)?;
+        self.update(Arc::new(new))
+    }
 }
 
 impl Default for Config {
@@ -46,6 +55,7 @@ impl Default for Config {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ConfigInstance {
     pub(crate) wifi_ssid: String,
     pub(crate) wifi_password: String,
@@ -57,8 +67,7 @@ pub(crate) struct ConfigInstance {
     pub(crate) sensor_calibration_rh_adj: Option<f32>,
     pub(crate) controls_min_press_ms: u32,
     pub(crate) controls_min_hold_ms: u32,
-    pub(crate) mister_auto_schedule: Vec<(f32, u32)>,
-    pub(crate) mister_auto_schedule_max_wait_ms: Option<u32>,
+    pub(crate) mister_auto_schedule: Vec<MisterAutoSchedule>,
     pub(crate) mister_auto_on_rh_adj: Option<f32>,
     pub(crate) mister_auto_off_rh_adj: Option<f32>,
     pub(crate) mister_auto_duration_min_ms: u32,
@@ -104,15 +113,81 @@ impl Default for ConfigInstance {
             controls_min_press_ms: 100,
             controls_min_hold_ms: 500,
             mister_auto_schedule: vec![
-                (85_f32, 60 * 5),
-                (88_f32, 60 * 5),
-                (90_f32, 60 * 2),
-                (80_f32, 60 * 7),
+                schedule![85.00, 60 * 2, Some(90)],
+                schedule![88.00, 60 * 3, Some(60)],
+                schedule![90.00, 60 * 3, Some(30)],
+                schedule![92.00, 60 * 3, Some(30)],
+                schedule![85.00, 60 * 2, Some(90)],
+                schedule![80.00, 60 * 5, Some(60)],
             ],
-            mister_auto_schedule_max_wait_ms: Some(90000),
             mister_auto_on_rh_adj: Some(-1_f32),
             mister_auto_off_rh_adj: None,
             mister_auto_duration_min_ms: 10000,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct MutableConfigInstance {
+    pub(crate) sensor_calibration_rh_adj: Option<f32>,
+    pub(crate) mister_auto_schedule: Option<Vec<MisterAutoSchedule>>,
+    pub(crate) mister_auto_on_rh_adj: Option<f32>,
+    pub(crate) mister_auto_off_rh_adj: Option<f32>,
+}
+
+impl MutableConfigInstance {
+    #[allow(dead_code)]
+    pub(crate) fn new() -> Self {
+        Self {
+            sensor_calibration_rh_adj: None,
+            mister_auto_schedule: None,
+            mister_auto_on_rh_adj: None,
+            mister_auto_off_rh_adj: None,
+        }
+    }
+
+    pub(crate) fn populate(mut self, cfg: &mut ConfigInstance) -> Result<()> {
+        if let Some(val) = self.sensor_calibration_rh_adj.take() {
+            cfg.sensor_calibration_rh_adj = Some(val);
+        }
+        if let Some(val) = self.mister_auto_schedule.take() {
+            cfg.mister_auto_schedule = val;
+        }
+        if let Some(val) = self.mister_auto_on_rh_adj.take() {
+            cfg.mister_auto_on_rh_adj = Some(val);
+        }
+        if let Some(val) = self.mister_auto_off_rh_adj.take() {
+            cfg.mister_auto_off_rh_adj = Some(val);
+        }
+
+        Ok(())
+    }
+}
+
+impl From<&ConfigInstance> for MutableConfigInstance {
+    fn from(value: &ConfigInstance) -> Self {
+        Self {
+            sensor_calibration_rh_adj: value.sensor_calibration_rh_adj.clone(),
+            mister_auto_schedule: Some(value.mister_auto_schedule.clone()),
+            mister_auto_on_rh_adj: value.mister_auto_on_rh_adj.clone(),
+            mister_auto_off_rh_adj: value.mister_auto_off_rh_adj.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct MisterAutoSchedule {
+    pub(crate) rh: f32,
+    pub(crate) run_secs: u32,
+    pub(crate) max_wait_secs: Option<u32>,
+}
+
+impl MisterAutoSchedule {
+    pub(crate) fn new(rh: f32, run_secs: u32, max_wait_secs: Option<u32>) -> Self {
+        Self {
+            rh,
+            run_secs,
+            max_wait_secs,
         }
     }
 }

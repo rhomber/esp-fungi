@@ -1,21 +1,31 @@
-use picoserve::response::{IntoResponse, Json};
+use picoserve::extract::{FromRequest, State};
+use picoserve::io::Read;
+use picoserve::request::{RequestBody, RequestParts};
+use picoserve::response::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::mister::{Mode as MisterMode, ACTIVE_MODE};
+use crate::error::{Error, Result};
+use crate::mister::{ChangeMode, Mode as MisterMode, ACTIVE_MODE};
+use crate::network::api::types::OkResponse;
+use crate::network::api::utils::deser_from_request;
+use crate::network::api::ApiState;
 
-pub(crate) async fn handle_get() -> impl IntoResponse {
+pub(crate) async fn handle_get() -> Json<GetModeResponse> {
     Json(GetModeResponse {
         mode: ACTIVE_MODE.read().clone(),
     })
 }
 
-/*
-pub(crate) async fn handle_change() -> impl IntoResponse {
-    // TODO:
+pub(crate) async fn handle_change(
+    State(state): State<ApiState>,
+    req: ChangeModeRequest,
+) -> Result<Json<OkResponse>> {
+    state
+        .change_mode_pub
+        .publish_immediate(ChangeMode::new(Some(req.mode)));
 
-    Ok(handle_get().await)
+    Ok(Json(OkResponse::default()))
 }
- */
 
 #[derive(Serialize)]
 pub(crate) struct GetModeResponse {
@@ -27,8 +37,7 @@ pub(crate) struct ChangeModeRequest {
     mode: MisterMode,
 }
 
-/*
-impl<'r, State> FromRequest<'r, State> for ChangeModeResponse {
+impl<'r, State> FromRequest<'r, State> for ChangeModeRequest {
     type Rejection = Error;
 
     async fn from_request<R: Read>(
@@ -36,13 +45,6 @@ impl<'r, State> FromRequest<'r, State> for ChangeModeResponse {
         _request_parts: RequestParts<'r>,
         request_body: RequestBody<'r, R>,
     ) -> Result<Self> {
-        serde_json::from_slice(request_body.read_all().await.map_err(|e| {
-            general_fault(format!(
-                "failed to read data from change mode request: {:?}",
-                e
-            ))
-        })?)
-        .map_err(map_json_err)
+        deser_from_request(request_body).await
     }
 }
- */
