@@ -362,13 +362,66 @@ impl AutoScheduleState {
         }
     }
     pub(crate) fn get_auto_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)> {
-        cfg.mister_auto_rh_schedule.get(self.idx).cloned()
+        cfg.mister_auto_schedule.get(self.idx).cloned()
     }
 }
 
 impl Default for AutoScheduleState {
     fn default() -> Self {
         Self::new(AutoScheduleMode::Initial, 0, 0, 0)
+    }
+}
+
+pub(crate) trait AutoScheduleStateOperator {
+    fn mode(&self) -> AutoScheduleMode;
+
+    fn idx(&self) -> usize;
+
+    fn start_time(&self) -> u32;
+
+    fn total_ms(&self) -> u32;
+
+    fn run_start_time(&self) -> u32;
+
+    fn running_ms(&self) -> u32;
+
+    fn update(&self, cb: impl FnOnce(&mut AutoScheduleState));
+
+    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)>;
+}
+
+impl AutoScheduleStateOperator for ActiveAutoScheduleState {
+    fn mode(&self) -> AutoScheduleMode {
+        self.read().mode
+    }
+
+    fn idx(&self) -> usize {
+        self.read().idx
+    }
+
+    fn start_time(&self) -> u32 {
+        self.read().start_time
+    }
+
+    fn total_ms(&self) -> u32 {
+        self.read().total_ms()
+    }
+
+    fn run_start_time(&self) -> u32 {
+        self.read().run_start_time
+    }
+
+    fn running_ms(&self) -> u32 {
+        self.read().running_ms()
+    }
+
+    fn update(&self, cb: impl FnOnce(&mut AutoScheduleState)) {
+        let mut wr = self.write();
+        cb(wr.deref_mut());
+    }
+
+    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)> {
+        self.read().get_auto_schedule(cfg).clone()
     }
 }
 
@@ -428,8 +481,6 @@ async fn mister_auto_schedule_task_poll(
     };
 
     if sleep_ms <= 0 {
-        log::warn!("CHECK 1");
-
         return mister_auto_schedule_check(cfg.as_ref()).await;
     }
 
@@ -481,7 +532,7 @@ async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<
 
 async fn mister_auto_schedule_next(cfg: &ConfigInstance) -> Result<()> {
     let cur_idx = ACTIVE_AUTO_SCHEDULE.idx();
-    if cfg.mister_auto_rh_schedule.len() >= cur_idx + 2 {
+    if cfg.mister_auto_schedule.len() >= cur_idx + 2 {
         mister_auto_schedule_start(cfg, cur_idx + 1).await
     } else {
         mister_auto_schedule_start(cfg, 0).await
@@ -492,29 +543,49 @@ async fn mister_auto_schedule_check(cfg: &ConfigInstance) -> Result<()> {
     let (target_rh, run_secs) = get_auto_schedule_checked(cfg)?;
 
     match sensor::METRICS.read().clone() {
-        Some(metrics) => match ACTIVE_AUTO_SCHEDULE.mode() {
-            AutoScheduleMode::Pending => {
-                let rh_on = cfg.mister_auto_on_rh(target_rh);
-                let rh_off = cfg.mister_auto_off_rh(target_rh);
+        Some(metrics) => {
+            match ACTIVE_AUTO_SCHEDULE.mode() {
+                AutoScheduleMode::Pending => {
+                    let rh_on = cfg.mister_auto_on_rh(target_rh);
+                    let rh_off = cfg.mister_auto_off_rh(target_rh);
 
-                if metrics.rh >= rh_on && metrics.rh <= rh_off {
-                    ACTIVE_AUTO_SCHEDULE.update(|s| {
-                        s.run_start_time = get_time_ms();
-                        s.mode = AutoScheduleMode::Running;
-                    });
+                    let should_run = if metrics.rh >= rh_on && metrics.rh <= rh_off {
+                        log::info!("Mister auto schedule ('{}') now 'Running' [rh '{}' >= '{}' && <= '{}']",
+                            ACTIVE_AUTO_SCHEDULE.idx(), metrics.rh, rh_on, rh_off);
+
+                        true
+                    } else if let Some(max_wait_ms) = cfg.mister_auto_schedule_max_wait_ms {
+                        if ACTIVE_AUTO_SCHEDULE.total_ms() >= max_wait_ms {
+                            log::warn!("Mister auto schedule ('{}') now 'Running' [time-out waiting for rh '{}' >= '{}' && <= '{}']",
+                                ACTIVE_AUTO_SCHEDULE.idx(), metrics.rh, rh_on, rh_off);
+
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if should_run {
+                        ACTIVE_AUTO_SCHEDULE.update(|s| {
+                            s.run_start_time = get_time_ms();
+                            s.mode = AutoScheduleMode::Running;
+                        });
+                    }
+
+                    Ok(())
                 }
+                AutoScheduleMode::Running => {
+                    if ACTIVE_AUTO_SCHEDULE.running_ms() >= run_secs * 1000 {
+                        mister_auto_schedule_next(cfg).await?;
+                    }
 
-                Ok(())
-            }
-            AutoScheduleMode::Running => {
-                if ACTIVE_AUTO_SCHEDULE.running_ms() >= run_secs * 1000 {
-                    mister_auto_schedule_next(cfg).await?;
+                    Ok(())
                 }
-
-                Ok(())
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
-        },
+        }
         None => Err(general_fault(
             "failed to check auto schedule - no sensor metrics".to_string(),
         )),
@@ -789,45 +860,4 @@ pub(crate) enum Status {
     Off,
     On,
     Fault,
-}
-
-pub(crate) trait AutoScheduleStateOperator {
-    fn mode(&self) -> AutoScheduleMode;
-
-    fn idx(&self) -> usize;
-
-    fn run_start_time(&self) -> u32;
-
-    fn running_ms(&self) -> u32;
-
-    fn update(&self, cb: impl FnOnce(&mut AutoScheduleState));
-
-    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)>;
-}
-
-impl AutoScheduleStateOperator for ActiveAutoScheduleState {
-    fn mode(&self) -> AutoScheduleMode {
-        self.read().mode
-    }
-
-    fn idx(&self) -> usize {
-        self.read().idx
-    }
-
-    fn run_start_time(&self) -> u32 {
-        self.read().run_start_time
-    }
-
-    fn running_ms(&self) -> u32 {
-        self.read().running_ms()
-    }
-
-    fn update(&self, cb: impl FnOnce(&mut AutoScheduleState)) {
-        let mut wr = self.write();
-        cb(wr.deref_mut());
-    }
-
-    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)> {
-        self.read().get_auto_schedule(cfg).clone()
-    }
 }
