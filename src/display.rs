@@ -28,8 +28,9 @@ use crate::error::{
     display_draw_err, map_display_err, map_embassy_pub_sub_err, map_embassy_spawn_err, Result,
 };
 use crate::mister::{
-    Mode as MisterMode, ModeChangedSubscriber as MisterModeChangedSubscriber,
-    Status as MisterStatus, Status, StatusChangedSubscriber as MisterStatusChangedSubscriber,
+    AutoScheduleStateOperator, Mode as MisterMode,
+    ModeChangedSubscriber as MisterModeChangedSubscriber, Status as MisterStatus, Status,
+    StatusChangedSubscriber as MisterStatusChangedSubscriber,
 };
 use crate::network::wifi::IP_ADDRESS;
 use crate::sensor::{SensorMetrics, SensorSubscriber};
@@ -363,11 +364,7 @@ impl<'d> DisplayRenderer<'d> {
         match self.mode {
             Mode::MisterMode => match self.mister_mode {
                 Some(MisterMode::Auto) => {
-                    let text = match mister::ACTIVE_AUTO
-                        .read()
-                        .get_auto_schedule(self.cfg.load().as_ref())
-                        .clone()
-                    {
+                    let text = match mister::ACTIVE_AUTO.get_schedule(self.cfg.load().as_ref()) {
                         Some((rh, _)) => format!("AUTO {}%", rh.ceil() as u32),
                         None => "AUTO ??%".to_string(),
                     };

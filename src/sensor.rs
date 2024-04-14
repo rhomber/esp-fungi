@@ -1,10 +1,9 @@
 use alloc::format;
+
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber};
 use embassy_time::{Duration, Timer};
-
-use crate::config::Config;
 #[cfg(feature = "hdc1080")]
 use embedded_hdc1080_rs::Hdc1080;
 use esp_hal::clock::Clocks;
@@ -19,6 +18,7 @@ use sensor_temp_humidity_sht40::{I2CAddr, Precision, SHT40Driver, TempUnit};
 use serde::Serialize;
 use spin::RwLock;
 
+use crate::config::Config;
 use crate::error::{
     general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, sensor_fault, Result,
 };
@@ -49,7 +49,7 @@ where
 {
     let delay = Delay::new(&clocks);
 
-    let i2c = I2C::new(i2c0, sda, scl, 1.kHz(), &clocks);
+    let i2c = I2C::new(i2c0, sda, scl, 60.Hz(), &clocks);
 
     let dev = Device::new(i2c, delay)
         .map_err(|e| general_fault(format!("failed to create sensor device: {:?}", e)))?;
@@ -94,9 +94,9 @@ async fn emitter_poll(
                         rh = MAX_RH;
                     }
 
-                    log::debug!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
+                    log::info!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
                 } else {
-                    log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
+                    log::info!("Sensor - Temp: {}, RH: {}%", temp, rh);
                 }
 
                 Some(SensorMetrics { temp, rh })

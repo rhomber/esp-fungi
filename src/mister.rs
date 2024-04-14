@@ -2,6 +2,7 @@ use alloc::format;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::fmt::{Display, Formatter};
+use core::ops::DerefMut;
 
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
@@ -28,6 +29,7 @@ const MISTER_POWER_GPIO_PIN: u8 = 17;
 const STATUS_LED_GPIO_PIN: u8 = 22;
 const MODE_FLASH_ADDR: u32 = 0x9000;
 
+// Mode
 type ChangeModeSubscriber = Subscriber<'static, CriticalSectionRawMutex, ChangeMode, 1, 2, 2>;
 pub(crate) type ChangeModePublisher =
     Publisher<'static, CriticalSectionRawMutex, ChangeMode, 1, 2, 2>;
@@ -41,6 +43,7 @@ pub(crate) static MODE_CHANGED_CHANNEL: PubSubChannel<CriticalSectionRawMutex, M
 
 pub(crate) static ACTIVE_MODE: RwLock<Option<Mode>> = RwLock::new(None);
 
+// Status
 pub(crate) type StatusChangedPublisher =
     Publisher<'static, CriticalSectionRawMutex, Status, 1, 2, 1>;
 pub(crate) type StatusChangedSubscriber =
@@ -49,7 +52,9 @@ pub(crate) static STATUS_CHANGED_CHANNEL: PubSubChannel<CriticalSectionRawMutex,
     PubSubChannel::new();
 pub(crate) static STATUS: RwLock<Option<Status>> = RwLock::new(Some(Status::Off));
 
-pub(crate) static ACTIVE_AUTO: Lazy<RwLock<AutoScheduleState>> =
+// Auto
+pub(crate) type ActiveAutoScheduleState = Lazy<RwLock<AutoScheduleState>>;
+pub(crate) static ACTIVE_AUTO: ActiveAutoScheduleState =
     Lazy::new(|| RwLock::new(AutoScheduleState::default()));
 
 static AUTO_SCHEDULE_PENDING_SLEEP_MS: u32 = 100;
@@ -178,7 +183,7 @@ async fn mister_operation_task_poll(
                         return Ok(());
                     }
                     WaitResult::Message(metrics) => {
-                        match ACTIVE_AUTO.read().get_auto_schedule(cfg.as_ref()) {
+                        match ACTIVE_AUTO.get_schedule(cfg.as_ref()) {
                             Some((target_rh, _)) => {
                                 mister_auto_rh_poll(
                                     cfg,
@@ -308,7 +313,7 @@ async fn mister_auto_rh_poll(
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Copy, Serialize)]
 pub(crate) enum AutoScheduleMode {
     Initial,
     Pending,
@@ -382,7 +387,7 @@ async fn mister_auto_schedule_task_poll(
     mode_changed_sub: &mut ModeChangedSubscriber,
 ) -> Result<()> {
     // Init
-    if matches!(ACTIVE_AUTO.read().mode, AutoScheduleMode::Initial) {
+    if matches!(ACTIVE_AUTO.mode(), AutoScheduleMode::Initial) {
         if !is_mode_auto() {
             return Ok(());
         }
@@ -390,20 +395,20 @@ async fn mister_auto_schedule_task_poll(
         // Initialize.
         mister_auto_schedule_start(cfg.as_ref(), 0).await?;
     } else if !is_mode_auto() {
-        ACTIVE_AUTO.write().reset();
+        ACTIVE_AUTO.update(|s| s.reset());
         return Ok(());
     }
 
     // Main
-    let (_, schedule_sleep_secs) = get_auto_schedule(cfg.as_ref())?;
+    let (_, schedule_sleep_secs) = get_auto_schedule_checked(cfg.as_ref())?;
 
-    let sleep_ms = match ACTIVE_AUTO.read().mode {
+    let sleep_ms = match ACTIVE_AUTO.mode() {
         AutoScheduleMode::Pending => AUTO_SCHEDULE_PENDING_SLEEP_MS,
         AutoScheduleMode::Running => {
-            if ACTIVE_AUTO.read().start_time > 0 {
-                (schedule_sleep_secs * 1000) - ACTIVE_AUTO.read().running_ms()
+            if ACTIVE_AUTO.start_time() > 0 {
+                (schedule_sleep_secs * 1000) - ACTIVE_AUTO.running_ms()
             } else {
-                ACTIVE_AUTO.write().reset();
+                ACTIVE_AUTO.update(|s| s.reset());
 
                 return Err(general_fault(
                     "auto schedule 'Waiting' with no start time!".to_string(),
@@ -437,7 +442,7 @@ async fn mister_auto_schedule_task_poll(
             }
             WaitResult::Message(_) => {
                 log::info!("Mister mode changed, resetting auto scheduler");
-                ACTIVE_AUTO.write().reset();
+                ACTIVE_AUTO.update(|s| s.reset());
 
                 Ok(())
             }
@@ -447,15 +452,13 @@ async fn mister_auto_schedule_task_poll(
 }
 
 async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<()> {
-    let (rh, run_secs) = get_auto_schedule(cfg)?;
+    let (rh, run_secs) = get_auto_schedule_checked(cfg)?;
 
-    match ACTIVE_AUTO.write() {
-        mut wr => {
-            wr.reset();
-            wr.idx = idx;
-            wr.mode = AutoScheduleMode::Pending;
-        }
-    }
+    ACTIVE_AUTO.update(|s| {
+        s.reset();
+        s.idx = idx;
+        s.mode = AutoScheduleMode::Pending;
+    });
 
     log::info!(
         "Started mister auto schedule [rh: {}, run_secs: {}]",
@@ -467,7 +470,7 @@ async fn mister_auto_schedule_start(cfg: &ConfigInstance, idx: usize) -> Result<
 }
 
 async fn mister_auto_schedule_next(cfg: &ConfigInstance) -> Result<()> {
-    let cur_idx = ACTIVE_AUTO.read().idx;
+    let cur_idx = ACTIVE_AUTO.idx();
     if cfg.mister_auto_rh_schedule.len() >= cur_idx + 2 {
         mister_auto_schedule_start(cfg, cur_idx + 1).await
     } else {
@@ -476,27 +479,26 @@ async fn mister_auto_schedule_next(cfg: &ConfigInstance) -> Result<()> {
 }
 
 async fn mister_auto_schedule_check(cfg: &ConfigInstance) -> Result<()> {
-    let (target_rh, run_secs) = get_auto_schedule(cfg)?;
+    let (target_rh, run_secs) = get_auto_schedule_checked(cfg)?;
 
     match sensor::METRICS.read().clone() {
-        Some(metrics) => match ACTIVE_AUTO.read().mode {
+        Some(metrics) => match ACTIVE_AUTO.mode() {
             AutoScheduleMode::Pending => {
                 let rh_on = cfg.mister_auto_on_rh(target_rh);
                 let rh_off = target_rh;
 
                 if metrics.rh >= rh_on && metrics.rh <= rh_off {
-                    match ACTIVE_AUTO.write() {
-                        mut wr => {
-                            wr.start_time = get_time_ms();
-                            wr.mode = AutoScheduleMode::Running;
-                        }
-                    }
+                    ACTIVE_AUTO.update(|s| {
+                        s.reset();
+                        s.start_time = get_time_ms();
+                        s.mode = AutoScheduleMode::Running;
+                    });
                 }
 
                 Ok(())
             }
             AutoScheduleMode::Running => {
-                if ACTIVE_AUTO.read().running_ms() >= run_secs * 1000 {
+                if ACTIVE_AUTO.running_ms() >= run_secs * 1000 {
                     mister_auto_schedule_next(cfg).await?;
                 }
 
@@ -510,15 +512,15 @@ async fn mister_auto_schedule_check(cfg: &ConfigInstance) -> Result<()> {
     }
 }
 
-fn get_auto_schedule(cfg: &ConfigInstance) -> Result<(f32, u32)> {
-    match ACTIVE_AUTO.read().get_auto_schedule(cfg) {
+fn get_auto_schedule_checked(cfg: &ConfigInstance) -> Result<(f32, u32)> {
+    match ACTIVE_AUTO.get_schedule(cfg) {
         Some((rh, run_secs)) => Ok((rh, run_secs)),
         None => {
-            ACTIVE_AUTO.write().reset();
+            ACTIVE_AUTO.update(|s| s.reset());
 
             Err(general_fault(format!(
                 "no mister auto schedule found for idx: {}",
-                ACTIVE_AUTO.read().idx
+                ACTIVE_AUTO.idx()
             )))
         }
     }
@@ -778,4 +780,45 @@ pub(crate) enum Status {
     Off,
     On,
     Fault,
+}
+
+pub(crate) trait AutoScheduleStateOperator {
+    fn mode(&self) -> AutoScheduleMode;
+
+    fn idx(&self) -> usize;
+
+    fn start_time(&self) -> u32;
+
+    fn running_ms(&self) -> u32;
+
+    fn update(&self, cb: impl FnOnce(&mut AutoScheduleState));
+
+    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)>;
+}
+
+impl AutoScheduleStateOperator for ActiveAutoScheduleState {
+    fn mode(&self) -> AutoScheduleMode {
+        self.read().mode
+    }
+
+    fn idx(&self) -> usize {
+        self.read().idx
+    }
+
+    fn start_time(&self) -> u32 {
+        self.read().start_time
+    }
+
+    fn running_ms(&self) -> u32 {
+        self.read().running_ms()
+    }
+
+    fn update(&self, cb: impl FnOnce(&mut AutoScheduleState)) {
+        let mut wr = self.write();
+        cb(wr.deref_mut());
+    }
+
+    fn get_schedule(&self, cfg: &ConfigInstance) -> Option<(f32, u32)> {
+        self.read().get_auto_schedule(cfg).clone()
+    }
 }
