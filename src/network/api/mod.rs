@@ -7,6 +7,7 @@ use embassy_time::{Duration, Timer};
 use esp_wifi::wifi::{WifiDevice, WifiStaDevice};
 use picoserve::{KeepAlive, ShutdownMethod, Timeouts};
 
+use crate::chip_control::{ChipControlPublisher, CHIP_CONTROL_CHANNEL};
 use crate::config::Config;
 use crate::error::{map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
 use crate::mister::{ChangeModePublisher, CHANGE_MODE_CHANNEL};
@@ -22,13 +23,19 @@ pub(crate) const WEB_TASK_POOL_SIZE: usize = 1;
 struct ApiState {
     cfg: Config,
     change_mode_pub: Arc<ChangeModePublisher>,
+    chip_control_pub: Arc<ChipControlPublisher>,
 }
 
 impl ApiState {
-    fn new(cfg: Config, change_mode_pub: Arc<ChangeModePublisher>) -> Self {
+    fn new(
+        cfg: Config,
+        change_mode_pub: Arc<ChangeModePublisher>,
+        chip_control_pub: Arc<ChipControlPublisher>,
+    ) -> Self {
         Self {
             cfg,
             change_mode_pub,
+            chip_control_pub,
         }
     }
 }
@@ -54,7 +61,13 @@ pub(crate) fn init(
             .map_err(map_embassy_pub_sub_err)?,
     );
 
-    let api_state = ApiState::new(cfg.clone(), change_mode_pub);
+    let chip_control_pub = Arc::new(
+        CHIP_CONTROL_CHANNEL
+            .publisher()
+            .map_err(map_embassy_pub_sub_err)?,
+    );
+
+    let api_state = ApiState::new(cfg.clone(), change_mode_pub, chip_control_pub);
 
     for id in 0..WEB_TASK_POOL_SIZE {
         spawner

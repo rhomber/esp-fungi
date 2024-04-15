@@ -8,15 +8,15 @@ use crate::config::{Config, ConfigInstance};
 use crate::error::{map_embassy_pub_sub_err, map_embassy_spawn_err, Result};
 
 pub(crate) type ChipControlPublisher =
-    Publisher<'static, CriticalSectionRawMutex, ChipControlAction, 1, 2, 1>;
+    Publisher<'static, CriticalSectionRawMutex, ChipControlAction, 1, 1, 2>;
 type ChipControlSubscriber =
-    Subscriber<'static, CriticalSectionRawMutex, ChipControlAction, 1, 2, 1>;
+    Subscriber<'static, CriticalSectionRawMutex, ChipControlAction, 1, 1, 2>;
 pub(crate) static CHIP_CONTROL_CHANNEL: PubSubChannel<
     CriticalSectionRawMutex,
     ChipControlAction,
     1,
-    2,
     1,
+    2,
 > = PubSubChannel::new();
 
 pub(crate) fn init(cfg: Config, spawner: &Spawner) -> Result<()> {

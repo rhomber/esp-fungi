@@ -60,7 +60,8 @@ impl Config {
 
         // TODO: PERSIST.
 
-        self.chip_control_pub.publish_immediate(ChipControlAction::Reset);
+        self.chip_control_pub
+            .publish_immediate(ChipControlAction::Reset);
 
         self.update(Arc::new(new))
     }
