@@ -1,3 +1,4 @@
+use alloc::format;
 use embedded_svc::io::asynch::Read;
 use picoserve::extract::{FromRequest, State};
 use picoserve::request::{RequestBody, RequestParts};
@@ -5,9 +6,9 @@ use picoserve::response::Json;
 
 use crate::config::MutableConfigInstance;
 use crate::error::Error;
-use crate::network::api::ApiState;
 use crate::network::api::types::OkResponse;
 use crate::network::api::utils::deser_from_request;
+use crate::network::api::ApiState;
 
 pub(crate) async fn handle_get(State(state): State<ApiState>) -> Json<MutableConfigInstance> {
     Json(MutableConfigInstance::from(state.cfg.load().as_ref()))
@@ -17,9 +18,12 @@ pub(crate) async fn handle_update(
     State(state): State<ApiState>,
     req: MutableConfigInstance,
 ) -> crate::error::Result<Json<OkResponse>> {
+    state.cfg.apply(req)?;
 
-
-    Ok(Json(OkResponse::default()))
+    Ok(Json(OkResponse::new(format!(
+        "device will reset in {} seconds",
+        state.cfg.load().reset_wait_secs
+    ))))
 }
 
 impl<'r, State> FromRequest<'r, State> for MutableConfigInstance {

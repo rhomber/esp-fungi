@@ -18,7 +18,7 @@ use sensor_temp_humidity_sht40::{I2CAddr, Precision, SHT40Driver, TempUnit};
 use serde::Serialize;
 use spin::RwLock;
 
-use crate::config::Config;
+use crate::config::{Config, ConfigInstance, SensorDriver};
 use crate::error::{
     general_fault, map_embassy_pub_sub_err, map_embassy_spawn_err, sensor_fault, Result,
 };
@@ -47,12 +47,9 @@ where
     SCL: Peripheral<P = SCL_> + 'static,
     SCL_: InputPin + OutputPin,
 {
-    let delay = Delay::new(&clocks);
-
     let i2c = I2C::new(i2c0, sda, scl, 1.kHz(), &clocks);
 
-    let dev = Device::new(i2c, delay)
-        .map_err(|e| general_fault(format!("failed to create sensor device: {:?}", e)))?;
+    let dev = Device::new(cfg.load().as_ref(), i2c, Delay::new(clocks))?;
 
     spawner
         .spawn(emitter(
@@ -129,6 +126,10 @@ async fn emitter_poll(
     if is_ok {
         Timer::after(Duration::from_millis(cfg.sensor_delay_ms as u64)).await;
     } else {
+        if let Err(e) = dev.reset() {
+            log::error!("Failed to reset sensor: {:?}", e);
+        }
+
         Timer::after(Duration::from_millis(cfg.sensor_delay_err_ms as u64)).await;
     }
 
@@ -141,70 +142,75 @@ pub(crate) struct SensorMetrics {
     pub(crate) rh: f32,
 }
 
-#[cfg(feature = "hdc1080")]
-struct Device<'d, T>
-where
-    T: Instance,
-{
-    dev: Hdc1080<I2C<'d, T>, Delay>,
+enum Device<'d, T> {
+    #[cfg(feature = "hdc1080")]
+    Hdc1080(Hdc1080<I2C<'d, T>, Delay>),
+    #[cfg(feature = "sht40")]
+    SHT40(SHT40Driver<I2C<'d, T>, Delay>),
 }
 
-#[cfg(feature = "hdc1080")]
 impl<'d, T> Device<'d, T>
 where
     T: Instance,
 {
-    fn new(i2c: I2C<'d, T>, delay: Delay) -> Result<Self> {
-        let mut dev = Hdc1080::new(i2c, delay).map_err(|e| {
-            general_fault(format!("failed to create hdc1080 sensor device: {:?}", e))
-        })?;
+    fn new(cfg: &ConfigInstance, i2c: I2C<'d, T>, delay: Delay) -> Result<Self> {
+        match cfg.sensor_driver {
+            #[cfg(feature = "hdc1080")]
+            SensorDriver::Hdc1080 => {
+                let mut dev = Hdc1080::new(i2c, delay).map_err(|e| {
+                    general_fault(format!("failed to create hdc1080 sensor device: {:?}", e))
+                })?;
 
-        dev.init()
-            .map_err(|e| general_fault(format!("failed to init hdc1080 sensor device: {:?}", e)))?;
+                dev.init().map_err(|e| {
+                    general_fault(format!("failed to init hdc1080 sensor device: {:?}", e))
+                })?;
 
-        Ok(Self { dev })
+                Ok(Device::Hdc1080(dev))
+            }
+            #[cfg(feature = "sht40")]
+            SensorDriver::SHT40 => {
+                let dev = SHT40Driver::new(i2c, I2CAddr::SHT4x_A, delay);
+
+                Ok(Device::SHT40(dev))
+            }
+        }
     }
 
     fn read(&mut self) -> Result<(f32, f32)> {
-        self.dev.read().map_err(|e| {
-            general_fault(format!(
-                "failed to read from hdc1080 sensor device: {:?}",
-                e
-            ))
-        })
-    }
-}
+        match self {
+            #[cfg(feature = "hdc1080")]
+            Device::Hdc1080(dev) => dev.read().map_err(|e| {
+                general_fault(format!(
+                    "failed to read from hdc1080 sensor device: {:?}",
+                    e
+                ))
+            }),
+            #[cfg(feature = "sht40")]
+            Device::SHT40(dev) => {
+                let measurement = dev
+                    .get_temp_and_rh(Precision::High, TempUnit::MilliDegreesCelsius)
+                    .map_err(|e| {
+                        sensor_fault(format!("Failed to take measurement from sensor: {:?}", e))
+                    })?;
 
-#[cfg(feature = "sht40")]
-struct Device<'d, T>
-where
-    T: Instance,
-{
-    dev: SHT40Driver<I2C<'d, T>, Delay>,
-}
-
-#[cfg(feature = "sht40")]
-impl<'d, T> Device<'d, T>
-where
-    T: Instance,
-{
-    fn new(i2c: I2C<'d, T>, delay: Delay) -> Result<Self> {
-        let dev = SHT40Driver::new(i2c, I2CAddr::SHT4x_A, delay);
-
-        Ok(Self { dev })
+                return Ok((
+                    measurement.temp as f32 / 1000_f32,
+                    measurement.rel_hum_pcm as f32 / 1000_f32,
+                ));
+            }
+        }
     }
 
-    fn read(&mut self) -> Result<(f32, f32)> {
-        let measurement = self
-            .dev
-            .get_temp_and_rh(Precision::High, TempUnit::MilliDegreesCelsius)
-            .map_err(|e| {
-                sensor_fault(format!("Failed to take measurement from sensor: {:?}", e))
-            })?;
-
-        return Ok((
-            measurement.temp as f32 / 1000_f32,
-            measurement.rel_hum_pcm as f32 / 1000_f32,
-        ));
+    fn reset(&mut self) -> Result<()> {
+        match self {
+            #[cfg(feature = "hdc1080")]
+            Device::Hdc1080(dev) => dev.reset().map_err(|e| {
+                general_fault(format!("failed to reset hdc1080 sensor device: {:?}", e))
+            }),
+            #[cfg(feature = "sht40")]
+            Device::SHT40(dev) => dev.soft_reset_device().map_err(|e| {
+                general_fault(format!("failed to reset sht40 sensor device: {:?}", e))
+            }),
+        }
     }
 }

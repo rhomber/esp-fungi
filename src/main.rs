@@ -2,14 +2,15 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
-mod config;
+pub(crate) mod chip_control;
+pub(crate) mod config;
 mod controls;
 mod display;
-mod error;
+pub(crate) mod error;
 mod mister;
 mod network;
-mod sensor;
-mod utils;
+pub(crate) mod sensor;
+pub(crate) mod utils;
 
 extern crate alloc;
 
@@ -38,7 +39,7 @@ async fn main(spawner: Spawner) {
     init_heap();
 
     // static config
-    let cfg = Config::default();
+    let cfg = Config::new().expect("failed to load config");
 
     // setup logger
     // To change the log_level change the env section in .cargo/config.toml
@@ -66,6 +67,11 @@ async fn main(spawner: Spawner) {
 
     // Init embassy
     embassy::init(&clocks, timer_group0);
+
+    // Init chip control
+    if let Err(e) = chip_control::init(cfg.clone(), &spawner) {
+        log::error!("Failed to init chip control: {:?}", e);
+    }
 
     if cfg.load().display_enabled {
         // Init display

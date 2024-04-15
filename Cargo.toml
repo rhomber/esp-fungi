@@ -26,7 +26,7 @@ opt-level = 3
 opt-level = 3
 
 [features]
-default = ["sht40"]
+default = ["sht40", "hdc1080"]
 hdc1080 = ["embedded-hdc1080-rs"]
 sht40 = ["sensor-temp-humidity-sht40"]
 
