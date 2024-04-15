@@ -26,6 +26,17 @@ pub(crate) async fn handle_update(
     ))))
 }
 
+pub(crate) async fn handle_reset(
+    State(state): State<ApiState>,
+) -> crate::error::Result<Json<OkResponse>> {
+    state.cfg.reset()?;
+
+    Ok(Json(OkResponse::new(format!(
+        "device will reset in {} seconds",
+        state.cfg.load().reset_wait_secs
+    ))))
+}
+
 impl<'r, State> FromRequest<'r, State> for MutableConfigInstance {
     type Rejection = Error;
 

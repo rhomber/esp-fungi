@@ -1,9 +1,11 @@
 use alloc::format;
+use core::cell::RefCell;
 
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber};
 use embassy_time::{Duration, Timer};
+use embedded_hal_bus::i2c::RefCellDevice;
 #[cfg(feature = "hdc1080")]
 use embedded_hdc1080_rs::Hdc1080;
 use esp_hal::clock::Clocks;
@@ -47,14 +49,11 @@ where
     SCL: Peripheral<P = SCL_> + 'static,
     SCL_: InputPin + OutputPin,
 {
-    let i2c = I2C::new(i2c0, sda, scl, 1.kHz(), &clocks);
-
-    let dev = Device::new(cfg.load().as_ref(), i2c, Delay::new(clocks))?;
-
     spawner
         .spawn(emitter(
             cfg,
-            dev,
+            I2C::new(i2c0, sda, scl, 1.kHz(), &clocks),
+            Delay::new(clocks),
             CHANNEL.publisher().map_err(map_embassy_pub_sub_err)?,
         ))
         .map_err(map_embassy_spawn_err)?;
@@ -65,21 +64,47 @@ where
 #[embassy_executor::task]
 async fn emitter(
     cfg: Config,
-    mut dev: Device<'static, I2C0>,
+    i2c: I2C<'static, I2C0>,
+    delay: Delay,
     publisher: Publisher<'static, CriticalSectionRawMutex, Option<SensorMetrics>, 1, 2, 1>,
 ) {
+    let i2c_rc = RefCell::new(i2c);
+
     loop {
-        if let Err(e) = emitter_poll(&cfg, &mut dev, &publisher).await {
-            log::warn!("Sensor emitter poll failed: {:?}", e);
+        let i2c = RefCellDevice::new(&i2c_rc);
+
+        match Device::new(cfg.load().as_ref(), i2c, delay) {
+            Ok(mut dev) => {
+                let mut failures: u8 = 0;
+                loop {
+                    match emitter_poll(&cfg, &mut dev, &publisher, &mut failures).await {
+                        Ok(reload) => {
+                            if reload {
+                                log::info!("Reloading sensor device");
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Sensor emitter poll failed: {:?}", e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to create sensor device: {:?}", e);
+
+                Timer::after(Duration::from_millis(cfg.load().sensor_delay_err_ms as u64)).await;
+            }
         }
     }
 }
 
-async fn emitter_poll(
+async fn emitter_poll<'d>(
     cfg: &Config,
-    dev: &mut Device<'static, I2C0>,
+    dev: &mut Device<'d, I2C0>,
     publisher: &Publisher<'static, CriticalSectionRawMutex, Option<SensorMetrics>, 1, 2, 1>,
-) -> Result<()> {
+    failures: &mut u8,
+) -> Result<bool> {
     let cfg = cfg.load();
 
     let msg = match dev.read() {
@@ -126,14 +151,21 @@ async fn emitter_poll(
     if is_ok {
         Timer::after(Duration::from_millis(cfg.sensor_delay_ms as u64)).await;
     } else {
+        if *failures >= 2 {
+            // Re-create device.
+            return Ok(true);
+        }
+
         if let Err(e) = dev.reset() {
             log::error!("Failed to reset sensor: {:?}", e);
         }
 
+        *failures += 1;
+
         Timer::after(Duration::from_millis(cfg.sensor_delay_err_ms as u64)).await;
     }
 
-    Ok(())
+    Ok(false)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -144,19 +176,19 @@ pub(crate) struct SensorMetrics {
 
 enum Device<'d, T> {
     #[cfg(feature = "hdc1080")]
-    Hdc1080(Hdc1080<I2C<'d, T>, Delay>),
+    HDC1080(Hdc1080<RefCellDevice<'d, I2C<'d, T>>, Delay>),
     #[cfg(feature = "sht40")]
-    SHT40(SHT40Driver<I2C<'d, T>, Delay>),
+    SHT40(SHT40Driver<RefCellDevice<'d, I2C<'d, T>>, Delay>),
 }
 
 impl<'d, T> Device<'d, T>
 where
     T: Instance,
 {
-    fn new(cfg: &ConfigInstance, i2c: I2C<'d, T>, delay: Delay) -> Result<Self> {
+    fn new(cfg: &ConfigInstance, i2c: RefCellDevice<'d, I2C<'d, T>>, delay: Delay) -> Result<Self> {
         match cfg.sensor_driver {
             #[cfg(feature = "hdc1080")]
-            SensorDriver::Hdc1080 => {
+            SensorDriver::HDC1080 => {
                 let mut dev = Hdc1080::new(i2c, delay).map_err(|e| {
                     general_fault(format!("failed to create hdc1080 sensor device: {:?}", e))
                 })?;
@@ -165,21 +197,21 @@ where
                     general_fault(format!("failed to init hdc1080 sensor device: {:?}", e))
                 })?;
 
-                Ok(Device::Hdc1080(dev))
+                Ok(Device::HDC1080(dev))
             }
             #[cfg(feature = "sht40")]
-            SensorDriver::SHT40 => {
-                let dev = SHT40Driver::new(i2c, I2CAddr::SHT4x_A, delay);
-
-                Ok(Device::SHT40(dev))
-            }
+            SensorDriver::SHT40 => Ok(Device::SHT40(SHT40Driver::new(
+                i2c,
+                I2CAddr::SHT4x_A,
+                delay,
+            ))),
         }
     }
 
     fn read(&mut self) -> Result<(f32, f32)> {
         match self {
             #[cfg(feature = "hdc1080")]
-            Device::Hdc1080(dev) => dev.read().map_err(|e| {
+            Device::HDC1080(dev) => dev.read().map_err(|e| {
                 general_fault(format!(
                     "failed to read from hdc1080 sensor device: {:?}",
                     e
@@ -201,10 +233,11 @@ where
         }
     }
 
+    #[allow(dead_code)]
     fn reset(&mut self) -> Result<()> {
         match self {
             #[cfg(feature = "hdc1080")]
-            Device::Hdc1080(dev) => dev.reset().map_err(|e| {
+            Device::HDC1080(dev) => dev.reset().map_err(|e| {
                 general_fault(format!("failed to reset hdc1080 sensor device: {:?}", e))
             }),
             #[cfg(feature = "sht40")]

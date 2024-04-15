@@ -18,6 +18,5 @@ pub(crate) fn init() -> Result<Router<impl PathRouter<ApiState> + Sized, ApiStat
         .route("/mode/change", post(mode::handle_change))
         .route("/config", get(config::handle_get))
         .route("/config/update", post(config::handle_update))
-        // TODO>
-        .route("/config/reset", post(config::handle_update)))
+        .route("/config/reset", post(config::handle_reset)))
 }

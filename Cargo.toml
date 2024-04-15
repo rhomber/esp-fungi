@@ -73,7 +73,8 @@ smoltcp = { version = "0.11.0", default-features = false, features = [
 embedded-svc = { version = "0.27.1", default-features = false, features = [] }
 embedded-io = {  version = "0.6.1" }
 embedded-hal = { version = "1.0.0" }
-embedded-hal-async = {  version = "1.0.0" }
+embedded-hal-async = { version = "1.0.0" }
+embedded-hal-bus = { version = "0.1.0", features = ["async"] }
 embedded-storage = { version = "0.3.1" }
 
 embassy-executor = { version = "0.5.0", features = ["nightly", "integrated-timers", "executor-thread"] }
@@ -86,6 +87,7 @@ embassy-net-driver = {  version = "0.2.0" }
 picoserve = { version = "0.10.2", features = ["embassy", "alloc"] }
 serde = { version = "1.0.197", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0.115", default-features = false, features = ["alloc"] }
+ciborium = { version = "0.2.2", default-features = false }
 
 fugit = { version = "0.3.7" }
 num-traits = { version = "0.2.17", features = ["libm"], default-features = false }
@@ -94,5 +96,5 @@ ssd1306 = { version = "0.8.4"  }
 embedded-graphics = { version = "0.8.1" }
 display-interface = { version = "0.4.1" }
 
-embedded-hdc1080-rs = { version = "0.1.0", optional = true }
-sensor-temp-humidity-sht40 = { version = "0.2.601", optional = true }
+embedded-hdc1080-rs = { git = "https://github.com/rhomber/hdc1080-embedded-rs.git", branch = "master", optional = true }
+sensor-temp-humidity-sht40 = { git = "https://github.com/rhomber/sensor-temp-humidity-sht40-rs.git", branch = "main", optional = true }

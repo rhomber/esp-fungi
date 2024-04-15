@@ -38,9 +38,6 @@ fn init_heap() {
 async fn main(spawner: Spawner) {
     init_heap();
 
-    // static config
-    let cfg = Config::new().expect("failed to load config");
-
     // setup logger
     // To change the log_level change the env section in .cargo/config.toml
     // or remove it and set ESP_LOGLEVEL manually before running cargo run
@@ -67,6 +64,9 @@ async fn main(spawner: Spawner) {
 
     // Init embassy
     embassy::init(&clocks, timer_group0);
+
+    // Init config
+    let cfg = Config::new().expect("failed to load config");
 
     // Init chip control
     if let Err(e) = chip_control::init(cfg.clone(), &spawner) {

@@ -1,14 +1,22 @@
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
+use alloc::{format, vec};
 
-use crate::chip_control;
+use embedded_storage::{ReadStorage, Storage};
+use esp_storage::FlashStorage;
 use serde::{Deserialize, Serialize};
 use spin::RwLock;
 
+use crate::chip_control;
 use crate::chip_control::{ChipControlAction, ChipControlPublisher};
-use crate::error::{map_embassy_pub_sub_err, Result};
+use crate::error::{general_fault, map_embassy_pub_sub_err, Result};
+
+const CONFIG_LEN_FLASH_ADDR: u32 = 0x9200;
+const CONFIG_DATA_FLASH_ADDR: u32 = 0x9202;
+const MAX_CONFIG_DATA_LEN: usize = (16_usize.pow(2) * 8) - 2; // To 0x9900
+
+type FlashStorageArc = Arc<RwLock<FlashStorage>>;
 
 macro_rules! schedule {
     ($rh:expr, $run_secs:expr, $max_wait_secs:expr) => {
@@ -20,16 +28,14 @@ macro_rules! schedule {
 pub(crate) struct Config {
     instance: Arc<RwLock<Option<Arc<ConfigInstance>>>>,
     chip_control_pub: Arc<ChipControlPublisher>,
+    flash_storage: FlashStorageArc,
 }
 
 impl Config {
     pub(crate) fn new() -> Result<Self> {
-        // TODO: LOAD PERSIST
+        let mut flash_storage = Arc::new(RwLock::new(FlashStorage::new()));
+        let inst = revive_from_flash(&mut flash_storage, ConfigInstance::default())?;
 
-        Self::new_with_instance(ConfigInstance::default())
-    }
-
-    fn new_with_instance(inst: ConfigInstance) -> Result<Self> {
         Ok(Self {
             instance: Arc::new(RwLock::new(Some(Arc::new(inst)))),
             chip_control_pub: Arc::new(
@@ -37,6 +43,7 @@ impl Config {
                     .publisher()
                     .map_err(map_embassy_pub_sub_err)?,
             ),
+            flash_storage,
         })
     }
 
@@ -55,16 +62,138 @@ impl Config {
     }
 
     pub(crate) fn apply(&self, update: MutableConfigInstance) -> Result<()> {
-        let mut new = ConfigInstance::default();
-        update.populate(&mut new)?;
+        persist_to_flash(&self.flash_storage, &update)?;
 
-        // TODO: PERSIST.
+        let mut new = ConfigInstance::default();
+        if let Err(e) = update.populate(&mut new) {
+            let _ = reset_config_flash(&self.flash_storage);
+            return Err(e);
+        }
 
         self.chip_control_pub
             .publish_immediate(ChipControlAction::Reset);
 
         self.update(Arc::new(new))
     }
+
+    pub(crate) fn reset(&self) -> Result<()> {
+        reset_config_flash(&self.flash_storage)?;
+
+        self.chip_control_pub
+            .publish_immediate(ChipControlAction::Reset);
+
+        self.update(Arc::new(ConfigInstance::default()))
+    }
+}
+
+fn revive_from_flash(
+    flash_storage: &FlashStorageArc,
+    mut inst: ConfigInstance,
+) -> Result<ConfigInstance> {
+    let mut bytes = [0u8; 2];
+    let mut storage = flash_storage.write();
+
+    // Read config length
+    storage
+        .read(CONFIG_LEN_FLASH_ADDR, &mut bytes)
+        .map_err(|e| {
+            general_fault(format!(
+                "Failed to load config len field from flash storage: {:?}",
+                e
+            ))
+        })?;
+
+    let len = u16::from_be_bytes(bytes);
+    if len == u16::MAX {
+        // No persisted config.
+        return Ok(inst);
+    }
+
+    let mut bytes = vec![0u8; len as usize];
+
+    // Read config data
+    storage
+        .read(CONFIG_DATA_FLASH_ADDR, &mut bytes)
+        .map_err(|e| {
+            general_fault(format!(
+                "Failed to load config data field from flash storage: {:?}",
+                e
+            ))
+        })?;
+
+    log::info!("Loaded config data from flash [{} bytes]", bytes.len());
+
+    let data: MutableConfigInstance = ciborium::from_reader(bytes.as_slice()).map_err(|e| {
+        general_fault(format!(
+            "Failed to deserialize config data read from flash storage: {:?}",
+            e
+        ))
+    })?;
+
+    data.populate(&mut inst)?;
+    Ok(inst)
+}
+
+fn persist_to_flash(
+    flash_storage: &FlashStorageArc,
+    mutable_cfg: &MutableConfigInstance,
+) -> Result<()> {
+    let mut bytes = Vec::new();
+    ciborium::into_writer(mutable_cfg, &mut bytes).map_err(|e| {
+        general_fault(format!(
+            "Failed to serialize config data read for storage: {:?}",
+            e
+        ))
+    })?;
+
+    if bytes.len() > MAX_CONFIG_DATA_LEN {
+        return Err(general_fault(format!(
+            "Failed to serialize config data read for storage - max bytes exceeded: '{}' > '{}'",
+            bytes.len(),
+            MAX_CONFIG_DATA_LEN
+        )));
+    }
+
+    write_config_len_to_flash(flash_storage, bytes.len() as u16)?;
+    write_config_data_to_flash(flash_storage, &bytes)?;
+
+    log::info!(
+        "Wrote config data to flash [{} bytes of {} max]",
+        bytes.len(),
+        MAX_CONFIG_DATA_LEN
+    );
+
+    Ok(())
+}
+
+fn reset_config_flash(flash_storage: &FlashStorageArc) -> Result<()> {
+    write_config_len_to_flash(flash_storage, u16::MAX)
+}
+
+fn write_config_len_to_flash(flash_storage: &FlashStorageArc, cfg_len: u16) -> Result<()> {
+    let mut flash_storage = flash_storage.write();
+
+    flash_storage
+        .write(CONFIG_LEN_FLASH_ADDR, cfg_len.to_be_bytes().as_ref())
+        .map_err(|e| {
+            general_fault(format!(
+                "Failed to write config len field to flash storage: {:?}",
+                e
+            ))
+        })
+}
+
+fn write_config_data_to_flash(flash_storage: &FlashStorageArc, cfg_data: &[u8]) -> Result<()> {
+    let mut flash_storage = flash_storage.write();
+
+    flash_storage
+        .write(CONFIG_DATA_FLASH_ADDR, cfg_data)
+        .map_err(|e| {
+            general_fault(format!(
+                "Failed to write config data field to flash storage: {:?}",
+                e
+            ))
+        })
 }
 
 #[derive(Clone)]
@@ -218,5 +347,5 @@ impl MisterAutoSchedule {
 pub(crate) enum SensorDriver {
     #[default]
     SHT40,
-    Hdc1080,
+    HDC1080,
 }
