@@ -92,6 +92,7 @@ async fn emitter(
             }
             Err(e) => {
                 log::warn!("Failed to create sensor device: {:?}", e);
+                publisher.publish_immediate(None);
 
                 Timer::after(Duration::from_millis(cfg.load().sensor_delay_err_ms as u64)).await;
             }
@@ -186,6 +187,8 @@ where
     T: Instance,
 {
     fn new(cfg: &ConfigInstance, i2c: RefCellDevice<'d, I2C<'d, T>>, delay: Delay) -> Result<Self> {
+        log::info!("Creating sensor device driver for: {:?}", cfg.sensor_driver);
+
         match cfg.sensor_driver {
             #[cfg(feature = "hdc1080")]
             SensorDriver::HDC1080 => {
