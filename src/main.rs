@@ -17,6 +17,7 @@ extern crate alloc;
 use core::mem::MaybeUninit;
 use embassy_executor::Spawner;
 use esp_backtrace as _;
+use esp_hal::efuse::Efuse;
 use esp_hal::{clock::ClockControl, embassy, peripherals::Peripherals, prelude::*, IO};
 
 use crate::config::Config;
@@ -61,6 +62,7 @@ async fn main(spawner: Spawner) {
     let timer_group1 = TimerGroup::new(peripherals.TIMG1, &clocks);
 
     log::info!("main init: Started");
+    log_chip_info();
 
     // Init embassy
     embassy::init(&clocks, timer_group0);
@@ -127,4 +129,22 @@ async fn main(spawner: Spawner) {
     }
 
     log::info!("main init: Completed");
+}
+
+fn log_chip_info() {
+    let mac_address = Efuse::read_base_mac_address();
+    log::info!(
+        "Chip Information [Chip: {:?}, Cores: {}, Freq: {}, MAC: {:02x}-{:02x}-{:02x}-{:02x}-{:02x}-{:02x}, BT: {}, Flash Encryption: {}]",
+        Efuse::get_chip_type(),
+        Efuse::get_core_count(),
+        Efuse::get_max_cpu_frequency(),
+        mac_address[0],
+        mac_address[1],
+        mac_address[2],
+        mac_address[3],
+        mac_address[4],
+        mac_address[5],
+        Efuse::is_bluetooth_enabled(),
+        Efuse::get_flash_encryption()
+    );
 }

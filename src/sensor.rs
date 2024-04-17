@@ -26,6 +26,7 @@ use crate::error::{
 };
 
 static MAX_RH: f32 = 100_f32;
+static MAX_FAILURES_TO_RESTART: u8 = 10;
 
 pub(crate) static METRICS: RwLock<Option<SensorMetrics>> = RwLock::new(None);
 
@@ -152,7 +153,7 @@ async fn emitter_poll<'d>(
     if is_ok {
         Timer::after(Duration::from_millis(cfg.sensor_delay_ms as u64)).await;
     } else {
-        if *failures >= 2 {
+        if *failures >= MAX_FAILURES_TO_RESTART {
             // Re-create device.
             return Ok(true);
         }
