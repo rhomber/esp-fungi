@@ -26,7 +26,7 @@ use crate::error::{
 };
 
 static MAX_RH: f32 = 100_f32;
-static MAX_FAILURES_TO_RESTART: u8 = 10;
+static MAX_ATTEMPTS: u8 = 10;
 
 pub(crate) static METRICS: RwLock<Option<SensorMetrics>> = RwLock::new(None);
 
@@ -75,22 +75,19 @@ async fn emitter(
         let i2c = RefCellDevice::new(&i2c_rc);
 
         match Device::new(cfg.load().as_ref(), i2c, delay) {
-            Ok(mut dev) => {
-                let mut failures: u8 = 0;
-                loop {
-                    match emitter_poll(&cfg, &mut dev, &publisher, &mut failures).await {
-                        Ok(reload) => {
-                            if reload {
-                                log::info!("Reloading sensor device");
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("Sensor emitter poll failed: {:?}", e);
+            Ok(mut dev) => loop {
+                match emitter_poll(&cfg, &mut dev, &publisher).await {
+                    Ok(reload) => {
+                        if reload {
+                            log::warn!("Reloading sensor device");
+                            break;
                         }
                     }
+                    Err(e) => {
+                        log::warn!("Sensor emitter poll failed: {:?}", e);
+                    }
                 }
-            }
+            },
             Err(e) => {
                 log::warn!("Failed to create sensor device: {:?}", e);
                 publisher.publish_immediate(None);
@@ -105,67 +102,79 @@ async fn emitter_poll<'d>(
     cfg: &Config,
     dev: &mut Device<'d, I2C0>,
     publisher: &Publisher<'static, CriticalSectionRawMutex, Option<SensorMetrics>, 1, 2, 1>,
-    failures: &mut u8,
 ) -> Result<bool> {
     let cfg = cfg.load();
 
-    let msg = match dev.read() {
-        Ok((temp, mut rh)) => {
-            if temp > 0_f32 && rh > 0_f32 {
-                if let Some(adj) = cfg.sensor_calibration_rh_adj {
-                    rh += adj;
-                    if rh > MAX_RH {
-                        rh = MAX_RH;
+    let mut msg: Option<SensorMetrics> = None;
+    for attempt in 1..(MAX_ATTEMPTS + 1) {
+        match dev.read() {
+            Ok((temp, mut rh)) => {
+                if temp > 0_f32 && rh > 0_f32 {
+                    if let Some(adj) = cfg.sensor_calibration_rh_adj {
+                        rh += adj;
+                        if rh > MAX_RH {
+                            rh = MAX_RH;
+                        }
+
+                        log::debug!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
+                    } else {
+                        log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
                     }
 
-                    log::debug!("Sensor - Temp: {}, RH: {}% (+{})", temp, rh, adj);
+                    let _ = msg.insert(SensorMetrics { temp, rh });
+                    break;
                 } else {
-                    log::debug!("Sensor - Temp: {}, RH: {}%", temp, rh);
+                    log::error!(
+                        "Failed to read from sensor (temp: {}, rh: {}) [attempt {} of {}]",
+                        temp,
+                        rh,
+                        attempt,
+                        MAX_ATTEMPTS
+                    );
                 }
-
-                Some(SensorMetrics { temp, rh })
-            } else {
-                log::error!("Failed to read from sensor (temp: {}, rh: {})", temp, rh);
-
-                None
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to read from sensor: {:?} [attempt {} of {}]",
+                    e,
+                    attempt,
+                    MAX_ATTEMPTS
+                );
             }
         }
-        Err(e) => {
-            log::error!("Failed to read from sensor: {:?}", e);
 
-            None
-        }
-    };
+        if attempt == MAX_ATTEMPTS {
+            break;
+        } else if attempt == (MAX_ATTEMPTS - 1) {
+            if let Err(e) = dev.reset() {
+                log::error!("Failed to send reset command to sensor: {:?}", e);
+            } else {
+                log::warn!("Sent reset command to sensor");
+            }
 
-    let is_ok = match msg.as_ref() {
-        Some(metrics) => {
-            let _ = METRICS.write().insert(metrics.clone());
-            true
+            Timer::after(Duration::from_millis(250)).await;
+        } else {
+            Timer::after(Duration::from_millis(100)).await;
         }
-        None => {
-            let _ = METRICS.write().take();
-            false
+    }
+
+    let failed = !msg.is_some();
+    match METRICS.write() {
+        mut wr => {
+            *wr = msg.clone();
         }
-    };
+    }
 
     publisher.publish_immediate(msg);
 
-    if is_ok {
-        Timer::after(Duration::from_millis(cfg.sensor_delay_ms as u64)).await;
-    } else {
-        if *failures >= MAX_FAILURES_TO_RESTART {
-            // Re-create device.
-            return Ok(true);
-        }
-
-        if let Err(e) = dev.reset() {
-            log::error!("Failed to reset sensor: {:?}", e);
-        }
-
-        *failures += 1;
-
+    if failed {
         Timer::after(Duration::from_millis(cfg.sensor_delay_err_ms as u64)).await;
+
+        // Re-create device.
+        return Ok(true);
     }
+
+    Timer::after(Duration::from_millis(cfg.sensor_delay_ms as u64)).await;
 
     Ok(false)
 }
